@@ -16,7 +16,7 @@
 
 #pragma once
 
-#include <SDL.h>
+#include <SDL3/SDL.h>
 
 #include "video/video_system.hpp"
 
@@ -30,6 +30,7 @@ public:
   virtual void set_title(const std::string& title) override;
   virtual void set_icon(const SDL_Surface& icon) override;
 
+  virtual SDL_Window* get_window() const override { return m_sdl_window.get(); }
   virtual Size get_window_size() const override;
   virtual void on_resize(int w, int h) override;
 

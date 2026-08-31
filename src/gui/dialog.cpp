@@ -116,7 +116,7 @@ Dialog::event(const SDL_Event& ev)
     return;
 
   switch (ev.type) {
-    case SDL_MOUSEBUTTONDOWN:
+    case SDL_EVENT_MOUSE_BUTTON_DOWN:
     if (ev.button.button == SDL_BUTTON_LEFT)
     {
       Vector mouse_pos = VideoSystem::current()->get_viewport().to_logical(ev.motion.x, ev.motion.y);
@@ -129,7 +129,7 @@ Dialog::event(const SDL_Event& ev)
     }
     break;
 
-    case SDL_MOUSEMOTION:
+    case SDL_EVENT_MOUSE_MOTION:
     {
       Vector mouse_pos = VideoSystem::current()->get_viewport().to_logical(ev.motion.x, ev.motion.y);
       int new_button = get_button_at(mouse_pos);
@@ -158,13 +158,13 @@ Dialog::process_input(const Controller& controller)
   if (m_passive) // Passive dialogs don't accept events.
     return;
 
-  if (controller.pressed(Control::LEFT))
+  if (controller.pressed_any(Control::LEFT, Control::PEEK_LEFT))
   {
     m_selected_button -= 1;
     m_selected_button = std::max(m_selected_button, 0);
   }
 
-  if (controller.pressed(Control::RIGHT))
+  if (controller.pressed_any(Control::RIGHT, Control::PEEK_RIGHT))
   {
     m_selected_button += 1;
     m_selected_button = std::min(m_selected_button, static_cast<int>(m_buttons.size()) - 1);
@@ -219,12 +219,9 @@ Dialog::draw(DrawingContext& context)
     return;
 
   // Draw horizontal line.
-  context.color().draw_filled_rect(Rectf(Vector(bg_rect.get_left(), bg_rect.get_bottom() - 35),
-                                         Sizef(bg_rect.get_width(), 4)),
+  context.color().draw_filled_rect(Rectf(Vector(bg_rect.get_left(), bg_rect.get_bottom() - 35.0f),
+                                         Sizef(bg_rect.get_width(), 2.0f)),
                                    g_config->hlcolor, LAYER_GUI);
-  context.color().draw_filled_rect(Rectf(Vector(bg_rect.get_left(), bg_rect.get_bottom() - 35),
-                                         Sizef(bg_rect.get_width(), 2)),
-                                   Color(1.0f, 1.0f, 1.0f, 1.0f), LAYER_GUI);
 
   // Draw buttons.
   for (int i = 0; i < static_cast<int>(m_buttons.size()); ++i)

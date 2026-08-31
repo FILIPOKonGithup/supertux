@@ -24,7 +24,7 @@
 #include <limits>
 #include <unordered_map>
 
-#ifdef EMSCRIPTEN
+#ifdef __EMSCRIPTEN__
 #include <emscripten.h>
 #include <emscripten/html5.h>
 #endif
@@ -57,6 +57,7 @@
 #include "sdk/integration.hpp"
 #include "sprite/sprite_manager.hpp"
 #include "supertux/constants.hpp"
+#include "supertux/console.hpp"
 #include "supertux/game_manager.hpp"
 #include "supertux/gameconfig.hpp"
 #include "supertux/globals.hpp"
@@ -140,6 +141,7 @@ Editor::Editor() :
   m_shift_pressed(false),
   m_alt_pressed(false),
   m_key_zoomed(false),
+  m_pen_down(false),
   m_sector(),
   m_levelloaded(false),
   m_leveltested(false),
@@ -168,7 +170,7 @@ Editor::Editor() :
   m_on_exit_cb(nullptr),
   m_save_temp_level(false),
   m_last_test_pos(std::nullopt),
-  m_shadow(SpriteManager::current()->create("images/engine/editor/shadow.png"))
+  m_test_icon(SpriteManager::current()->create("images/engine/editor/spawnpoint.png"))
 {
   auto toolbox_widget = std::make_unique<EditorToolboxWidget>(*this);
   auto layers_widget = std::make_unique<EditorLayersWidget>(*this);
@@ -228,7 +230,6 @@ Editor::draw(Compositor& compositor)
       widget->draw(context);
     }
 
-    m_toolbar_widget->draw(context);
     m_overlay_widget->draw_tilemap_outer_shading(context);
     m_overlay_widget->draw_tilemap_border(context);
 
@@ -272,10 +273,8 @@ Editor::draw(Compositor& compositor)
           context.scale(camera.get_current_scale());
 
           const Rectf& bbox = moving_selected_obj->get_bbox();
-          context.color().draw_line(bbox.p1() - Vector(10.f, 10.f), bbox.p1() - Vector(0.f, 10.f), Color::WHITE, LAYER_GUI + 1);
-          context.color().draw_line(bbox.p1() - Vector(10.f, 10.f), bbox.p1() - Vector(10.f, 0.f), Color::WHITE, LAYER_GUI + 1);
-          context.color().draw_line(bbox.p2() + Vector(10.f, 10.f), bbox.p2() + Vector(0.f, 10.f), Color::WHITE, LAYER_GUI + 1);
-          context.color().draw_line(bbox.p2() + Vector(10.f, 10.f), bbox.p2() + Vector(10.f, 0.f), Color::WHITE, LAYER_GUI + 1);
+          context.color().draw_rect(bbox.grown(10.f), Color::WHITE, LAYER_GUI + 1);
+          
           context.color().draw_line(Vector(bbox.get_right() + 10.f, bbox.get_top() - 10.f),
                                     Vector(bbox.get_right() + 10.f, bbox.get_top()),
                                     Color::WHITE, LAYER_GUI + 1);
@@ -303,23 +302,17 @@ Editor::draw(Compositor& compositor)
     constexpr float LINE_THICKNESS = 1.f;
     Rectf border_rect = Rectf{SCREEN_WIDTH - 128.f - LINE_THICKNESS, 0,
                               SCREEN_WIDTH - 128.f, static_cast<float>(SCREEN_HEIGHT - 32.f)};
-    Color line_color = g_config->editorcolor;
-    line_color.red -= 0.2;
-    line_color.green -= 0.2;
-    line_color.blue -= 0.2;
-    line_color.alpha -= 0.2;
+    Color line_color = (g_config->editorcolor - Color(0.2, 0.2, 0.2, 0.2)).validate();
     context.color().draw_filled_rect(border_rect, line_color, LAYER_GUI + 1);
 
-    if (m_shadow)
-    {
-      Rectf shadow_rect = border_rect;
-      shadow_rect.set_left(border_rect.get_left() - 16 + LINE_THICKNESS);
-      shadow_rect.set_right(border_rect.get_right() - LINE_THICKNESS);
-      context.set_alpha(0.2);
-      m_shadow->draw_scaled(context.color(), shadow_rect, LAYER_GUI + 1);
-      context.set_alpha(1.0);
-    }
-
+    Rectf shadow_rect = border_rect;
+    shadow_rect.set_left(border_rect.get_left() - 16 + LINE_THICKNESS);
+    shadow_rect.set_right(border_rect.get_right() - LINE_THICKNESS);
+    context.color().draw_gradient(Color(0.0f, 0.0f, 0.0f, 0.0f),
+                                  Color(0.0f, 0.0f, 0.0f, 0.2f),
+                                  LAYER_GUI + 1,
+                                  GradientDirection::HORIZONTAL,
+                                  shadow_rect);
 
     Rectf layers_rect = Rectf{0, SCREEN_HEIGHT - 32.f - LINE_THICKNESS,
                               SCREEN_WIDTH - 128.f, SCREEN_HEIGHT - 32.f};
@@ -329,6 +322,24 @@ Editor::draw(Compositor& compositor)
     context.color().draw_filled_rect(context.get_rect(),
                                      Color(0.0f, 0.0f, 0.0f),
                                      0.0f, std::numeric_limits<int>::min());
+
+
+    // Show a little indicator for testing
+    if (m_ctrl_pressed && m_shift_pressed)
+    {
+      if (m_enabled)
+        MouseCursor::current()->set_visible(false);
+      context.color().draw_text(
+        Resources::normal_font,
+        "T",
+        { m_mouse_pos.x + 12.f, m_mouse_pos.y - 16.f - 12.f }, ALIGN_LEFT, LAYER_OBJECTS+1,
+        Color(1.0f, 1.0f, 0.6f, 0.8f));
+      m_test_icon->draw_scaled(context.color(),
+                               {{m_mouse_pos.x - 16.f, m_mouse_pos.y - 16.f}, Sizef{32.f, 32.f}},
+                               LAYER_GUI + 1);
+    }
+    else if (m_enabled)
+      MouseCursor::current()->set_visible(true);
 
     if (!m_show_draggables && m_show_draggables_hint.get_progress() < 1.0f)
     {
@@ -346,7 +357,8 @@ Editor::draw(Compositor& compositor)
                                         -100);
   }
 
-  MouseCursor::current()->set_visible(true);
+  if (!(m_ctrl_pressed && m_shift_pressed))
+    MouseCursor::current()->set_visible(true);
 }
 
 void
@@ -396,6 +408,8 @@ Editor::update(float dt_sec, const Controller& controller)
   if (m_deactivate_request) {
     m_enabled = false;
     m_deactivate_request = false;
+    if (!m_test_request)
+      MouseCursor::current()->set_visible(true);
     return;
   }
 
@@ -414,6 +428,14 @@ Editor::update(float dt_sec, const Controller& controller)
       }
     }
     m_enabled = true;
+
+    m_ctrl_pressed = m_alt_pressed = false;
+    // any mouse events from earlier (i.e. in menu, testing) dont pass through
+    // the editor in those states, so as a lazy hack, let's just get the mouse
+    // position.
+    float x, y;
+    SDL_GetMouseState(&x, &y);
+    m_mouse_pos = VideoSystem::current()->get_viewport().to_logical(x, y);
   }
 
   if (m_save_request) {
@@ -501,8 +523,6 @@ Editor::update(float dt_sec, const Controller& controller)
     m_key_zoomed = false;
     m_new_scale = 0.f;
   }
-
-  m_sector->pause_camera_interpolation();
 
   camera.update(dt_sec);
 }
@@ -594,46 +614,49 @@ Editor::test_level(const std::optional<std::pair<std::string, Vector>>& test_pos
     return;
   }
 
-  Tile::draw_editor_images = false;
-  Compositor::s_render_lighting = true;
-
-  std::unique_ptr<World> owned_world;
-  World* current_world = m_world.get();
-
-  if (!g_config->max_viewport && g_config->editor_max_viewport)
-    VideoSystem::current()->get_viewport().force_full_viewport(false);
-
-  m_leveltested = true;
-  if ((m_level && !current_world) || m_levelfile == "")
+  check_save_prerequisites([this, test_pos]()
   {
-    GameManager::current()->start_level(m_level.get(), test_pos, true);
-    return;
-  }
+    Tile::draw_editor_images = false;
+    Compositor::s_render_lighting = true;
 
-  std::string backup_filename = get_autosave_from_levelname(m_levelfile);
-  std::string directory = get_level_directory();
+    std::unique_ptr<World> owned_world;
+    World* current_world = m_world.get();
 
-  // This is jank to get an owned World pointer, GameManager/World
-  // could probably need a refactor to handle this better.
-  if (!current_world) {
-    owned_world = World::from_directory(directory);
-    current_world = owned_world.get();
-  }
+    if (!g_config->max_viewport && g_config->editor_max_viewport)
+      VideoSystem::current()->get_viewport().force_full_viewport(false);
 
-  m_autosave_levelfile = FileSystem::join(directory, backup_filename);
-  m_level->save(m_autosave_levelfile);
-  m_time_since_last_save = 0.f;
+    m_leveltested = true;
+    if ((m_level && !current_world) || m_levelfile == "")
+    {
+      GameManager::current()->start_level(m_level.get(), test_pos, true);
+      return;
+    }
 
-  if (!m_level->is_worldmap())
-  {
-    // TODO: After LevelSetScreen is removed, this should return a boolean indicating whether load was successful.
-    //       If not, call reactivate().
-    GameManager::current()->start_level(*current_world, backup_filename, test_pos, true);
-  }
-  else if (!GameManager::current()->start_worldmap(*current_world, m_autosave_levelfile, test_pos))
-  {
-    reactivate();
-  }
+    std::string backup_filename = get_autosave_from_levelname(m_levelfile);
+    std::string directory = get_level_directory();
+
+    // This is jank to get an owned World pointer, GameManager/World
+    // could probably need a refactor to handle this better.
+    if (!current_world) {
+      owned_world = World::from_directory(directory);
+      current_world = owned_world.get();
+    }
+
+    m_autosave_levelfile = FileSystem::join(directory, backup_filename);
+    m_level->save(m_autosave_levelfile);
+    m_time_since_last_save = 0.f;
+
+    if (!m_level->is_worldmap())
+    {
+      // TODO: After LevelSetScreen is removed, this should return a boolean indicating whether load was successful.
+      //       If not, call reactivate().
+      GameManager::current()->start_level(*current_world, backup_filename, test_pos, true);
+    }
+    else if (!GameManager::current()->start_worldmap(*current_world, m_autosave_levelfile, test_pos))
+    {
+      reactivate();
+    }
+  });
 }
 
 void
@@ -687,13 +710,10 @@ Editor::esc_press()
 void
 Editor::update_keyboard(const Controller& controller)
 {
-  if (!m_enabled)
+  if(!has_focus())
     return;
 
-  if (MenuManager::instance().is_active() || MenuManager::instance().has_dialog())
-    return;
-
-  const Uint8* keys = nullptr;
+  const bool* keys = nullptr;
   keys = SDL_GetKeyboardState(nullptr);
   assert(keys != nullptr);
 
@@ -815,6 +835,8 @@ Editor::set_level(std::unique_ptr<Level> level, bool reset)
 
   if (reset) {
     m_tileset = TileManager::current()->get_tileset(m_level->get_tileset());
+    m_toolbox_widget->get_tilebox().set_input_type(InputType::TILE);
+    m_toolbox_widget->get_tilebox().select_tilegroup(0);
   }
 
   load_sector(sector_name);
@@ -1178,11 +1200,28 @@ Editor::on_window_resize()
   }
 }
 
+bool
+Editor::has_focus() const
+{
+  if (!m_enabled || !m_levelloaded)
+    return false;
+
+  const auto& menu_manager = MenuManager::instance();
+  if (menu_manager.is_active() || menu_manager.has_dialog())
+    return false;
+
+  auto console = Console::current();
+  if (console && console->hasFocus())
+    return false;
+
+  return true;
+}
+
 void
 Editor::event(const SDL_Event& ev)
 {
-  if (!m_enabled || !m_levelloaded ||
-      MenuManager::current()->is_active() || MenuManager::current()->has_dialog()) return;
+  if (!has_focus())
+    return;
 
   for(const auto& control : m_controls)
     if (control->event(ev))
@@ -1190,7 +1229,7 @@ Editor::event(const SDL_Event& ev)
 
   try
   {
-    if (ev.type == SDL_MOUSEMOTION)
+    if (ev.type == SDL_EVENT_MOUSE_MOTION)
     {
       m_mouse_pos = VideoSystem::current()->get_viewport().to_logical(ev.motion.x, ev.motion.y);
 
@@ -1199,7 +1238,7 @@ Editor::event(const SDL_Event& ev)
       if (!m_controls.empty() && Rectf(0, 32.0f, 200.0f, SCREEN_HEIGHT - 32.0f).contains(m_mouse_pos))
         return;
     }
-    else if (ev.type == SDL_MOUSEBUTTONDOWN)
+    else if (ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN)
     {
       switch (ev.button.button)
       {
@@ -1214,33 +1253,35 @@ Editor::event(const SDL_Event& ev)
       // If properties sidebar controls are active and the mouse is hovering over the sidebar,
       // do not propagate mouse events to the editor or its widgets.
       if (!m_controls.empty() &&
-          (ev.type == SDL_MOUSEBUTTONDOWN || ev.type == SDL_MOUSEBUTTONUP || ev.type == SDL_MOUSEWHEEL) &&
+          (ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN ||
+           ev.type == SDL_EVENT_MOUSE_BUTTON_UP ||
+           ev.type == SDL_EVENT_MOUSE_WHEEL) &&
           Rectf(0, 32.0f, 200.0f, SCREEN_HEIGHT - 32.0f).contains(m_mouse_pos))
       {
         return;
       }
 
-      if (ev.type == SDL_KEYDOWN)
+      if (ev.type == SDL_EVENT_KEY_DOWN)
       {
-        m_ctrl_pressed = ev.key.keysym.mod & KMOD_CTRL;
-        m_shift_pressed = ev.key.keysym.mod & KMOD_SHIFT;
-        m_alt_pressed = ev.key.keysym.mod & KMOD_ALT;
+        m_ctrl_pressed = ev.key.mod & SDL_KMOD_CTRL;
+        m_shift_pressed = ev.key.mod & SDL_KMOD_SHIFT;
+        m_alt_pressed = ev.key.mod & SDL_KMOD_ALT;
 
         if (m_ctrl_pressed)
           m_scroll_speed = 16.0f;
-        else if (ev.key.keysym.mod & KMOD_RSHIFT)
+        else if (ev.key.mod & SDL_KMOD_RSHIFT)
           m_scroll_speed = 96.0f;
 
-        if (ev.key.keysym.sym == SDLK_F6)
+        if (ev.key.key == SDLK_F6)
         {
           Compositor::s_render_lighting = !Compositor::s_render_lighting;
           return;
         }
         else if (m_ctrl_pressed)
         {
-          switch (ev.key.keysym.sym)
+          switch (ev.key.key)
           {
-            case SDLK_t:
+            case SDLK_T:
               if (m_shift_pressed && m_alt_pressed)
               {
                 test_level(m_last_test_pos);
@@ -1254,21 +1295,21 @@ Editor::event(const SDL_Event& ev)
 
               test_level(m_last_test_pos);
               break;
-            case SDLK_s:
+            case SDLK_S:
               save_level();
               break;
-            case SDLK_z:
+            case SDLK_Z:
               undo();
               break;
-            case SDLK_y:
+            case SDLK_Y:
               redo();
               break;
-            case SDLK_h:
+            case SDLK_H:
               m_show_draggables = !m_show_draggables;
               if (!m_show_draggables)
                 m_show_draggables_hint.start(6.7f);
               break;
-            case SDLK_x:
+            case SDLK_X:
               m_toolbar_widget->toggle_tile_object_mode();
               break;
             case SDLK_PAGEUP:
@@ -1288,7 +1329,7 @@ Editor::event(const SDL_Event& ev)
               m_key_zoomed = true;
               m_new_scale = m_sector->get_camera().get_current_scale() - CAMERA_ZOOM_SENSITIVITY;
               break;
-            case SDLK_d: // Reset zoom
+            case SDLK_D: // Reset zoom
               m_new_scale = 1.f;
               break;
             default:
@@ -1296,19 +1337,32 @@ Editor::event(const SDL_Event& ev)
           }
         }
       }
-      else if (ev.type == SDL_KEYUP)
+      else if (ev.type == SDL_EVENT_KEY_UP)
       {
-        m_ctrl_pressed = ev.key.keysym.mod & KMOD_CTRL;
-        m_shift_pressed = ev.key.keysym.mod & KMOD_SHIFT;
-        m_alt_pressed = ev.key.keysym.mod & KMOD_ALT;
+        m_ctrl_pressed = ev.key.mod & SDL_KMOD_CTRL;
+        m_shift_pressed = ev.key.mod & SDL_KMOD_SHIFT;
+        m_alt_pressed = ev.key.mod & SDL_KMOD_ALT;
 
-        if (!m_ctrl_pressed && !(ev.key.keysym.mod & KMOD_RSHIFT))
+        if (!m_ctrl_pressed && !(ev.key.mod & SDL_KMOD_RSHIFT))
           m_scroll_speed = 32.0f;
       }
-      else if (ev.type == SDL_MOUSEWHEEL && !m_toolbox_widget->has_mouse_focus() && !m_layers_widget->has_mouse_focus())
+      else if (ev.type == SDL_EVENT_PEN_BUTTON_DOWN)
       {
-        float wheel_x = g_config->precise_scrolling ? ev.wheel.preciseX : ev.wheel.x;
-        float wheel_y = g_config->precise_scrolling ? ev.wheel.preciseY : ev.wheel.y;
+        m_pen_down = true;
+      }
+      else if (ev.type == SDL_EVENT_PEN_BUTTON_UP)
+      {
+        m_pen_down = false;
+      }
+      else if (ev.type == SDL_EVENT_MOUSE_WHEEL && !m_toolbox_widget->has_mouse_focus() && !m_layers_widget->has_mouse_focus())
+      {
+#if SDL_VERSION_ATLEAST(3, 2, 12)
+        float wheel_x = g_config->precise_scrolling ? ev.wheel.x : ev.wheel.integer_x;
+        float wheel_y = g_config->precise_scrolling ? ev.wheel.y : ev.wheel.integer_y;
+#else
+        float wheel_x = ev.wheel.x;
+        float wheel_y = ev.wheel.y;
+#endif
         if (g_config->invert_wheel_x) wheel_x *= -1.f;
         if (g_config->invert_wheel_y) wheel_y *= -1.f;
         // Scroll or zoom with mouse wheel, if the mouse is not over the toolbox.
@@ -1357,6 +1411,10 @@ Editor::sort_layers()
 void
 Editor::select_tilegroup(int id)
 {
+  // dumb hack around dumb design...
+  if (m_toolbox_widget->get_tilebox().get_input_type() != InputType::TILE)
+    m_toolbar_widget->toggle_tile_object_mode();
+
   m_toolbox_widget->select_tilegroup(id);
 }
 
@@ -1376,17 +1434,22 @@ void
 Editor::change_tileset()
 {
   m_tileset = TileManager::current()->get_tileset(m_level->get_tileset());
-  m_toolbox_widget->get_tilebox().set_input_type(InputType::NONE);
+  m_toolbox_widget->get_tilebox().set_input_type(InputType::TILE);
   for (const auto& sector : m_level->m_sectors) {
     for (auto& tilemap : sector->get_objects_by_type<TileMap>()) {
       tilemap.set_tileset(m_tileset);
     }
   }
+  m_toolbox_widget->get_tilebox().select_tilegroup(0);
 }
 
 void
 Editor::select_objectgroup(int id)
 {
+  // dumb hack around dumb design...
+  if (m_toolbox_widget->get_tilebox().get_input_type() != InputType::OBJECT)
+    m_toolbar_widget->toggle_tile_object_mode();
+
   m_toolbox_widget->select_objectgroup(id);
 }
 

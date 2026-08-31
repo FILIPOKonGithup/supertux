@@ -21,8 +21,11 @@
 #include <filesystem>
 #include <fstream>
 
-#include <SDL_image.h>
-#include <SDL_ttf.h>
+#include <SDL3/SDL.h>
+#include <SDL3/SDL_init.h>
+#include <SDL3/SDL_touch.h>
+#include <SDL3_image/SDL_image.h>
+#include <SDL3_ttf/SDL_ttf.h>
 #include <physfs.h>
 #include <tinygettext/log.hpp>
 #include <fmt/format.h>
@@ -180,7 +183,18 @@ PhysfsSubsystem::PhysfsSubsystem(const char* argv0,
   m_datadir(),
   m_userdir()
 {
-  if (!PHYSFS_init(argv0))
+  int physfs_init_success = 0;
+
+#ifdef __ANDROID__
+  PHYSFS_AndroidInit androidInit;
+  androidInit.jnienv = SDL_GetAndroidJNIEnv();
+  androidInit.context = SDL_GetAndroidActivity();
+  physfs_init_success = PHYSFS_init((const char*)(&androidInit));
+#else
+  physfs_init_success = PHYSFS_init(argv0); 
+#endif
+
+  if (!physfs_init_success)
   {
     std::stringstream msg;
     msg << "Couldn't initialize physfs: " << physfsutil::get_last_error();
@@ -223,9 +237,8 @@ void PhysfsSubsystem::find_mount_datadir()
   else
   {
     // check if we run from source dir
-    char* basepath_c = SDL_GetBasePath();
+    const char* basepath_c = SDL_GetBasePath();
     std::string basepath = basepath_c ? basepath_c : "./";
-    SDL_free(basepath_c);
 
     if (FileSystem::exists(FileSystem::join(BUILD_DATA_DIR, "credits.stxt")))
     {
@@ -365,7 +378,7 @@ if (FileSystem::is_directory(olduserdir)) {
 }
 #endif
 
-#ifdef EMSCRIPTEN
+#ifdef __EMSCRIPTEN__
   m_userdir = "/home/web_user/.local/share/supertux2/";
 #endif
 
@@ -375,7 +388,7 @@ if (FileSystem::is_directory(olduserdir)) {
     log_info << "Created SuperTux userdir: " << m_userdir << std::endl;
   }
 
-#ifdef EMSCRIPTEN
+#ifdef __EMSCRIPTEN__
   EM_ASM({
     try {
       FS.mount(IDBFS, {}, m_userdir);
@@ -443,13 +456,13 @@ PhysfsSubsystem::setup_android_datadir() const
 
   if (newdata) {
     // Copy
-    SDL_RWops* zipcp = SDL_RWFromFile(newzip.c_str(), "w");
+    SDL_IOStream* zipcp = SDL_IOFromFile(newzip.c_str(), "w");
     if (!zipcp) {
       SDL_free(zipdata);
       return false;
     }
-    SDL_RWwrite(zipcp, zipdata, sizeof(char), zipsz);
-    SDL_RWclose(zipcp);
+    SDL_WriteIO(zipcp, zipdata, zipsz);
+    SDL_CloseIO(zipcp);
   }
 
   SDL_free(zipdata);
@@ -466,23 +479,12 @@ PhysfsSubsystem::~PhysfsSubsystem()
 
 SDLSubsystem::SDLSubsystem()
 {
-  Uint32 flags = SDL_INIT_TIMER | SDL_INIT_VIDEO | SDL_INIT_JOYSTICK | SDL_INIT_GAMECONTROLLER;
+  Uint32 flags = SDL_INIT_VIDEO | SDL_INIT_JOYSTICK | SDL_INIT_GAMEPAD;
 
-#if SDL_VERSION_ATLEAST(2,0,22) && (defined(__linux) || defined(__linux__) || defined(linux) || defined(__FreeBSD) || \
-    defined(__OPENBSD) || defined(__NetBSD)) && !defined(STEAM_BUILD) && !defined(ANDROID)
-  /* See commit 254fcc9 for SDL. Most of the Nvidia problems are knocked out (i
-   * think) for now thanks to nvidia's open drivers. Wayland is needed for
-   * precision scrolling to work (which is used for the editor) and most distros
-   * are shipping wayland out of the box, so let's prefer it.
-   *
-   * When we migrate to SDL3, we can remove this snippet as they've now
-   * defaulted to preferring Wayland (if i recall) -- Swagtoy
-   */
-  if (g_config->prefer_wayland)
-    SDL_SetHint(SDL_HINT_VIDEODRIVER, "wayland,x11");
-
+#ifdef HAVE_EPOXY
+  SDL_SetHint(SDL_HINT_VIDEO_FORCE_EGL, "1");
 #endif
-  if (SDL_Init(flags) < 0)
+  if (SDL_Init(flags) == false)
   {
     std::stringstream msg;
     msg << "Couldn't initialize SDL: " << SDL_GetError();
@@ -490,10 +492,12 @@ SDLSubsystem::SDLSubsystem()
   }
 
 #ifdef __ANDROID__
-  g_config->mobile_controls = SDL_GetNumTouchDevices() > 0;
+  int num_touch_devices;
+  SDL_GetTouchDevices(&num_touch_devices);
+  g_config->mobile_controls = (num_touch_devices > 0);
 #endif
 
-  if (TTF_Init() < 0)
+  if (!TTF_Init())
   {
     std::stringstream msg;
     msg << "Couldn't initialize SDL TTF: " << SDL_GetError();
@@ -526,8 +530,14 @@ Main::init_video()
   SDLSurfacePtr icon = SDLSurface::from_file(icon_fname);
   VideoSystem::current()->set_icon(*icon);
 
-  SDL_ShowCursor(
-    (g_config->custom_mouse_cursor && !g_config->custom_system_cursor) ? SDL_DISABLE : SDL_ENABLE);
+  if (g_config->custom_mouse_cursor && !g_config->custom_system_cursor)
+  {
+    SDL_HideCursor();
+  }
+  else
+  {
+    SDL_ShowCursor();
+  }
 
   log_info << (g_config->use_fullscreen?"fullscreen ":"window ")
            << " Window: "     << g_config->window_size
@@ -581,7 +591,7 @@ Main::launch_game(const CommandLineArguments& args)
 
   s_timelog.log("commandline");
 
-#ifndef EMSCRIPTEN
+#ifndef __EMSCRIPTEN__
   auto video = g_config->video;
   if (args.resave && *args.resave) {
     if (args.video) {
@@ -633,6 +643,15 @@ Main::launch_game(const CommandLineArguments& args)
   {
     for(auto start_level : args.filenames)
     {
+      // PhysFS doesn't like relative paths
+#ifdef WIN32
+      std::wstring wpath = std::filesystem::weakly_canonical({ start_level });
+      std::wstring_convert<std::codecvt_utf8<wchar_t>, wchar_t> converter;
+      start_level = converter.to_bytes(wpath);
+#else
+      start_level = std::filesystem::weakly_canonical({ start_level });
+#endif
+
       // we have a normal path specified at commandline, not a physfs path.
       // So we simply mount that path here...
       std::string dir = FileSystem::dirname(start_level);
@@ -654,7 +673,6 @@ Main::launch_game(const CommandLineArguments& args)
         {
           auto editor = std::make_unique<Editor>();
           editor->set_level(start_level);
-          editor->update(0, Controller());
           m_screen_manager->push_screen(std::move(editor));
           MenuManager::instance().clear_menu_stack();
           m_sound_manager->stop_music(0.5);
@@ -774,9 +792,9 @@ Main::run(int argc, char** argv)
     }
 
 #ifdef __ANDROID__
-    m_physfs_subsystem.reset(new PhysfsSubsystem(nullptr, args.datadir, SDL_AndroidGetExternalStoragePath()));
+    m_physfs_subsystem.reset(new PhysfsSubsystem(argv[0], args.datadir, SDL_GetAndroidExternalStoragePath()));
 #else
-    m_physfs_subsystem.reset(new PhysfsSubsystem(nullptr, args.datadir, args.userdir));
+    m_physfs_subsystem.reset(new PhysfsSubsystem(argv[0], args.datadir, args.userdir));
 #endif
     m_physfs_subsystem->print_search_path();
 
@@ -826,7 +844,7 @@ Main::run(int argc, char** argv)
   g_dictionary_manager.reset();
 
 #ifdef __ANDROID__
-  // SDL2 keeps shared libraries loaded after the app is closed,
+  // SDL3 keeps shared libraries loaded after the app is closed,
   // when we launch the app again the static initializers will run twice and crash the app.
   // So we just need to terminate the app process 'gracefully', without running destructors or atexit() functions.
   _Exit(result);
@@ -867,8 +885,8 @@ Main::release_check()
     std::string latest_ver;
     if (mapping.get("latest", latest_ver) && latest_ver != PACKAGE_VERSION_TAG)
     {
-      const std::string version_full = std::string(PACKAGE_VERSION);
-      const std::string version = version_full.substr(version_full.find("v") + 1, version_full.find("-") - 1);
+      const std::string version_tag = std::string(PACKAGE_VERSION_TAG);
+      const std::string version = version_tag.substr(version_tag.find("v"), version_tag.find("-"));
       if (version != latest_ver)
       {
         auto notif = std::make_unique<Notification>("new_release_" + latest_ver, 20.f, false, true);

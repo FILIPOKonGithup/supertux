@@ -17,6 +17,7 @@
 #include "util/file_system.hpp"
 #include "supertux/globals.hpp"
 
+#include <physfs.h>
 #include <filesystem>
 #include <iostream>
 #include <sstream>
@@ -41,10 +42,8 @@
 #include <curl/curl.h>
 #endif
 
-#include <SDL2/SDL_version.h>
-#if SDL_VERSION_ATLEAST(2,0,14)
-#include <SDL2/SDL_misc.h>
-#endif
+#include <SDL3/SDL_version.h>
+#include <SDL3/SDL_misc.h>
 
 #include "gui/dialog.hpp"
 #include "util/log.hpp"
@@ -230,6 +229,39 @@ bool remove(const std::string& path)
   return fs::remove(location);
 }
 
+bool
+rename(const std::string& old_filename, const std::string& new_filename)
+{
+  std::unique_ptr<PHYSFS_File, decltype(&PHYSFS_close)> oldfile
+    { PHYSFS_openRead(old_filename.c_str()), PHYSFS_close };
+
+  if (!oldfile)
+  {
+    return false;
+  }
+
+  size_t oldfile_len = PHYSFS_fileLength(oldfile.get());
+  char* oldfile_data = new char[oldfile_len];
+
+  if (PHYSFS_readBytes(oldfile.get(), oldfile_data, oldfile_len) != oldfile_len)
+  {
+    // give up to be safe
+    delete[] oldfile_data;
+    return false;
+  }
+
+  std::unique_ptr<PHYSFS_File, decltype(&PHYSFS_close)> newfile =
+    { PHYSFS_openWrite(new_filename.c_str()), PHYSFS_close };
+  if (PHYSFS_writeBytes(newfile.get(), oldfile_data, oldfile_len) != oldfile_len)
+  {
+    delete[] oldfile_data;
+    return false;
+  }
+
+  oldfile.reset();
+  return PHYSFS_delete(old_filename.c_str()) != 0;
+}
+
 void open_path(const std::string& path)
 {
 #ifdef __ANDROID__
@@ -262,7 +294,7 @@ void open_path(const std::string& path)
 void
 open_editor(const std::string& filename)
 {
-#if !defined(ANDROID) && !defined(EMSCRIPTEN)
+#if !defined(ANDROID) && !defined(__EMSCRIPTEN__)
   std::string editor =
 #ifdef WIN32
     "notepad.exe"; // *shrugs*
@@ -294,7 +326,7 @@ open_editor(const std::string& filename)
 
 std::string escape_url(const std::string& url)
 {
-#ifndef __EMSCRIPTEN__
+#ifdef HAVE_CURL
   std::string result = url;
   char *output = curl_easy_escape(nullptr, url.c_str(), static_cast<int>(url.length()));
   if(output) {
@@ -303,19 +335,22 @@ std::string escape_url(const std::string& url)
   }
 
   return result;
-#else
+#elif defined(__EMSCRIPTEN__)
   return emscripten_run_script_string(("encodeURIComponent(" + url + ")").c_str());
+#else
+  // just to be safe, lets... return nothing ;-/
+  return "";
 #endif
 }
 
 void open_url(const std::string& url)
 {
-#if SDL_VERSION_ATLEAST(2,0,14)
-  SDL_OpenURL(url.c_str());
-#elif defined(__EMSCRIPTEN__)
+#ifdef __EMSCRIPTEN__ // TODO: is this still needed?
   emscripten_run_script(("window.open('" + url + "');").c_str());
 #else
-  open_path(url);
+  SDL_OpenURL(url.c_str());
+//#else
+//  open_path(url);
 #endif
 }
 

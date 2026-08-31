@@ -22,6 +22,7 @@
 #include "util/currenton.hpp"
 
 #include "control/controller.hpp"
+#include "supertux/menu/menu_storage.hpp"
 #include "supertux/savegame.hpp"
 #include "supertux/timer.hpp"
 #include "worldmap/worldmap_sector.hpp"
@@ -94,6 +95,8 @@ public:
 
   const std::string& get_filename() const;
 
+  inline int get_save_version() const { return m_save_version; }
+
   void start_level(bool skip_cutscene = false) {
     m_really_enter_level = true;
     m_skip_cutscene = skip_cutscene;
@@ -107,7 +110,7 @@ private:
 
   void process_input(const Controller& controller);
 
-  void on_escape_press();
+  void on_menu_button_press(MenuStorage::MenuId menu_type);
 
 private:
   WorldMapSector* m_sector; /* The currently active sector. */
@@ -119,6 +122,7 @@ private:
   TileSet* m_tileset;
 
   std::string m_name;
+  int m_save_version;
   std::string m_map_filename;
   std::string m_levels_path;
 

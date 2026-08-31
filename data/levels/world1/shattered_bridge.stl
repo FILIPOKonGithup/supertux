@@ -3,6 +3,7 @@
   (name (_ "Shattered Bridge"))
   (author "Carsten Wirtz")
   (license "CC-BY-SA 4.0 International")
+  (target-time 80)
   (allow-item-pocket "inherit")
   (icon "")
   (icon-locked "")
@@ -196,7 +197,6 @@
     )
     (dispenser
       (z-pos 55)
-      (glinting #f)
       (cycle 4)
       (objects
         (mrbomb
@@ -212,7 +212,6 @@
     )
     (dispenser
       (z-pos 55)
-      (glinting #f)
       (cycle 4)
       (type "cannon")
       (objects
@@ -228,7 +227,6 @@
     )
     (dispenser
       (z-pos 55)
-      (glinting #f)
       (cycle 4)
       (objects
         (haywire
@@ -244,7 +242,6 @@
     )
     (dispenser
       (z-pos 55)
-      (glinting #f)
       (cycle 4)
       (type "cannon")
       (objects
@@ -260,7 +257,6 @@
     )
     (dispenser
       (z-pos 55)
-      (glinting #f)
       (cycle 4)
       (type "cannon")
       (objects

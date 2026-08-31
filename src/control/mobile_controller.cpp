@@ -19,7 +19,7 @@
 
 #include <string>
 
-#include "SDL.h"
+#include <SDL3/SDL.h>
 
 #include "gui/menu_manager.hpp"
 #include "util/log.hpp"
@@ -65,10 +65,12 @@ MobileController::MobileController() :
   m_screen_width(),
   m_screen_height(),
   m_mobile_controls_scale(),
-  m_haptic(nullptr, SDL_HapticClose),
+  m_haptic(nullptr),//, SDL_HapticClose),
   m_haptic_timer(0)
 {
-#ifdef __ANDROID__
+// FIXME: SDL3
+#if 0
+//#ifdef __ANDROID__
   SDL_InitSubSystem(SDL_INIT_HAPTIC | SDL_INIT_TIMER);
   // ifdef'd just to be safe
   m_haptic.reset(SDL_HapticOpen(0));
@@ -89,6 +91,7 @@ MobileController::MobileController() :
 void
 MobileController::buzz()
 {
+#if 0 // FIXME: SDL3
   if (!m_haptic || !g_config->touch_haptic_feedback)
     return;
 
@@ -101,12 +104,13 @@ MobileController::buzz()
     data->m_haptic_timer = 0;
     return 0;
   }, this);
+#endif
 }
 
 void
 MobileController::draw(DrawingContext& context)
 {
-  if (!g_config->mobile_controls)
+  if (!g_config->mobile_controls || !g_config->touch_controls_visible)
     return;
 
   if (m_screen_width != static_cast<int>(context.get_width()) ||
@@ -194,11 +198,11 @@ MobileController::update()
   m_input.reset();
 
   // Allow using on-screen controls with the mouse
-  int x, y;
+  float x, y;
   auto buttons = SDL_GetMouseState(&x, &y);
   if ((buttons & SDL_BUTTON_LMASK) != 0)
   {
-    activate_widget_at_pos(static_cast<float>(x), static_cast<float>(y));
+    activate_widget_at_pos(x, y);
   }
 
   for (auto& i : m_fingers)
@@ -239,10 +243,8 @@ MobileController::apply(Controller& controller) const
 }
 
 bool
-MobileController::process_finger_down_event(const SDL_TouchFingerEvent& event)
+MobileController::pos_inside_widget(const Vector& pos) const
 {
-  Vector pos(event.x * float(m_screen_width), event.y * float(m_screen_height));
-  m_fingers[event.fingerId] = pos;
   return m_rect_jump.contains(pos) ||
     m_rect_action.contains(pos) ||
     m_rect_escape.contains(pos) ||
@@ -250,34 +252,30 @@ MobileController::process_finger_down_event(const SDL_TouchFingerEvent& event)
     m_rect_directions.contains(pos) ||
     (g_config->developer_mode && m_rect_cheats.contains(pos)) ||
     (g_config->developer_mode && m_rect_debug.contains(pos));
+}
+
+bool
+MobileController::process_finger_down_event(const SDL_TouchFingerEvent& event)
+{
+  Vector pos(event.x * float(m_screen_width), event.y * float(m_screen_height));
+  m_fingers[event.fingerID] = pos;
+  return pos_inside_widget(pos);
 }
 
 bool
 MobileController::process_finger_up_event(const SDL_TouchFingerEvent& event)
 {
   Vector pos(event.x * float(m_screen_width), event.y * float(m_screen_height));
-  m_fingers.erase(event.fingerId);
-  return m_rect_jump.contains(pos) ||
-    m_rect_action.contains(pos) ||
-    m_rect_escape.contains(pos) ||
-    m_rect_item.contains(pos) ||
-    m_rect_directions.contains(pos) ||
-    (g_config->developer_mode && m_rect_cheats.contains(pos)) ||
-    (g_config->developer_mode && m_rect_debug.contains(pos));
+  m_fingers.erase(event.fingerID);
+  return pos_inside_widget(pos);
 }
 
 bool
 MobileController::process_finger_motion_event(const SDL_TouchFingerEvent& event)
 {
   Vector pos(event.x * float(m_screen_width), event.y * float(m_screen_height));
-  m_fingers[event.fingerId] = pos;
-  return m_rect_jump.contains(pos) ||
-    m_rect_action.contains(pos) ||
-    m_rect_escape.contains(pos) ||
-    m_rect_item.contains(pos) ||
-    m_rect_directions.contains(pos) ||
-    (g_config->developer_mode && m_rect_cheats.contains(pos)) ||
-    (g_config->developer_mode && m_rect_debug.contains(pos));
+  m_fingers[event.fingerID] = pos;
+  return pos_inside_widget(pos);
 }
 
 void

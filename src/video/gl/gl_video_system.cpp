@@ -144,7 +144,7 @@ GLVideoSystem::~GLVideoSystem()
   m_lightmap.reset();
   m_back_renderer.reset();
   m_context.reset();
-  SDL_GL_DeleteContext(m_glcontext);
+  SDL_GL_DestroyContext(m_glcontext);
 }
 
 std::string
@@ -234,11 +234,12 @@ GLVideoSystem::create_gl_context()
   // Nothing to do.
 #elif defined(USE_OPENGLES1)
   // Nothing to do.
-#else
-#  ifdef USE_GLBINDING
+#elif defined(HAVE_EPOXY)
+  // Nothing to do
+#elif defined(USE_GLBINDING)
   glbinding::Binding::initialize();
 
-#    ifdef USE_GLBINDING_DEBUG_OUTPUT
+#  ifdef USE_GLBINDING_DEBUG_OUTPUT
   glbinding::setCallbackMask(glbinding::CallbackMask::After | glbinding::CallbackMask::ParametersAndReturnValue);
 
   glbinding::setAfterCallback([](const glbinding::FunctionCall & call) {
@@ -260,13 +261,13 @@ GLVideoSystem::create_gl_context()
 
       std::cout << std::endl;
     });
-#    endif
+#  endif
   static auto extensions = glbinding::ContextInfo::extensions();
   log_info << "Using glbinding" << std::endl;
   log_info << "ARB_texture_non_power_of_two: " << static_cast<int>(extensions.find(GLextension::GL_ARB_texture_non_power_of_two) != extensions.end()) << std::endl;
-#  else
+#else // Glew
   GLenum err = glewInit();
-#    ifdef GLEW_ERROR_NO_GLX_DISPLAY
+#  ifdef GLEW_ERROR_NO_GLX_DISPLAY
   // Glew can't open glx display when it's running on wayland session
   // and thus returns an error. But glXGetProcAddress is fully usable
   // on wayland, so we can just ignore the "no glx display" error.
@@ -279,7 +280,7 @@ GLVideoSystem::create_gl_context()
     log_info << "GLEW couldn't open GLX display" << std::endl;
   }
   else
-#    endif
+#  endif
     if (GLEW_OK != err)
     {
       std::ostringstream out;
@@ -294,7 +295,6 @@ GLVideoSystem::create_gl_context()
   log_info << "OpenGL: " << glGetString(GL_VERSION) << std::endl;
   log_info << "Using GLEW " << glewGetString(GLEW_VERSION) << std::endl;
   log_info << "GLEW_ARB_texture_non_power_of_two: " << static_cast<int>(GLEW_ARB_texture_non_power_of_two) << std::endl;
-#  endif
 #endif
 
   assert_gl();
@@ -312,7 +312,7 @@ GLVideoSystem::apply_config()
   m_viewport = Viewport::from_size(target_size, m_desktop_size);
 
 #ifdef __ANDROID__
-  // SDL2 on Android reports display resolution size including the camera cutout,
+  // SDL3 on Android reports display resolution size including the camera cutout,
   // however it will not draw inside the cutout, so we must use the window size here
   // instead of the display resolution, or the video will be rendered partly outside of the screen.
   m_viewport = Viewport::from_size(g_config->window_size, g_config->window_size);
@@ -376,14 +376,14 @@ GLVideoSystem::flip()
 void
 GLVideoSystem::set_vsync(int mode)
 {
-  if (SDL_GL_SetSwapInterval(mode) < 0)
+  if (SDL_GL_SetSwapInterval(mode) == false)
   {
     log_warning << "Setting vsync mode to " << mode << " failed: " << SDL_GetError() << std::endl;
     if(mode != 1)
     {
       mode = 1;
       log_warning << "Trying to set vsync mode to 1" << std::endl;
-      if (SDL_GL_SetSwapInterval(1) < 0)
+      if (SDL_GL_SetSwapInterval(1) == false)
       {
         log_warning << "Setting vsync mode failed: " << SDL_GetError() << ". Trying to set vsync mode to 0" << std::endl;
         if(mode != 0)
@@ -405,7 +405,9 @@ GLVideoSystem::set_vsync(int mode)
 int
 GLVideoSystem::get_vsync() const
 {
-  return SDL_GL_GetSwapInterval();
+  int interval;
+  SDL_GL_GetSwapInterval(&interval);
+  return interval;
 }
 
 SDLSurfacePtr

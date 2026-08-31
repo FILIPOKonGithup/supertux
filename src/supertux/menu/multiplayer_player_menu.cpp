@@ -17,12 +17,13 @@
 #include "supertux/menu/multiplayer_player_menu.hpp"
 
 #include <fmt/format.h>
-#include <SDL.h>
+#include <SDL3/SDL.h>
 
 #include "control/game_controller_manager.hpp"
 #include "control/input_manager.hpp"
 #include "control/joystick_manager.hpp"
 #include "gui/dialog.hpp"
+#include "gui/item_toggle.hpp"
 #include "object/player.hpp"
 #include "supertux/game_session.hpp"
 #include "supertux/gameconfig.hpp"
@@ -37,7 +38,8 @@ MultiplayerPlayerMenu::MultiplayerPlayerMenu(int player_id)
   add_label(fmt::format(_("Player {}"), player_id + 1));
   add_hl();
 
-  add_toggle(-1, _("Play with the keyboard"), &InputManager::current()->m_uses_keyboard[player_id]);
+  add_toggle(-1, _("Play with the keyboard"), &InputManager::current()->m_uses_keyboard[player_id])
+    .set_help(_("Don't automatically bind controllers to this player, and spawn it even if it has no controller."));
 
   if (player_id != 0 && GameSession::current()
       && !GameSession::current()->get_savegame().is_title_screen())
@@ -124,7 +126,7 @@ MultiplayerPlayerMenu::MultiplayerPlayerMenu(int player_id)
       auto controller = pair.first;
       std::string prefix = (pair.second == -1) ? "" : (pair.second == player_id) ? "-> " : ("[" + std::to_string(pair.second + 1) + "] ");
 
-      add_entry(prefix + std::string(SDL_GameControllerName(pair.first)), [controller, player_id] {
+      add_entry(prefix + std::string(SDL_GetGamepadName(pair.first)), [controller, player_id] {
         InputManager::current()->game_controller_manager->bind_controller(controller, player_id);
 
         auto err = InputManager::current()->game_controller_manager->rumble(controller);
@@ -156,7 +158,7 @@ MultiplayerPlayerMenu::MultiplayerPlayerMenu(int player_id)
       auto joystick = pair.first;
       std::string prefix = (pair.second == -1) ? "" : (pair.second == player_id) ? "-> " : ("[" + std::to_string(pair.second + 1) + "] ");
 
-      add_entry(prefix + std::string(SDL_JoystickName(pair.first)), [joystick, player_id] {
+      add_entry(prefix + std::string(SDL_GetJoystickName(pair.first)), [joystick, player_id] {
         InputManager::current()->joystick_manager->bind_joystick(joystick, player_id);
 
         auto err = InputManager::current()->joystick_manager->rumble(joystick);

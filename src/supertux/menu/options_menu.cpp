@@ -37,6 +37,7 @@
 #include "video/video_system.hpp"
 #include "video/viewport.hpp"
 
+#include <cassert>
 #include <sstream>
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
@@ -64,6 +65,7 @@ OptionsMenu::OptionsMenu(Type type, bool complete) :
   m_window_resolutions(),
   m_resolutions(),
   m_vsyncs(),
+  m_screen_shake_modes(),
   m_sound_volumes(),
   m_music_volumes(),
   m_flash_intensity_values(),
@@ -129,6 +131,8 @@ OptionsMenu::refresh()
 
       add_flash_intensity();
 
+      add_screen_shake_mode();
+
 #if !defined(HIDE_NONMOBILE_OPTIONS) && !defined(__EMSCRIPTEN__)
       add_aspect_ratio();
 #endif
@@ -174,6 +178,9 @@ OptionsMenu::refresh()
       add_toggle(MNID_RUMBLING, _("Enable Rumbling Controllers"), &g_config->multiplayer_buzz_controllers)
         .set_help(_("Enable vibrating the game controllers.") + " " + _("This feature is currently only used in the multiplayer options menu."));
 #else
+      add_toggle(-1, _("Show Touch Controls"), &g_config->touch_controls_visible)
+        .set_help(_("If disabled, touch controls will still work, but the buttons will remain hidden."));
+
       add_toggle(-1, _("Enable Haptic Feedback"), &g_config->touch_haptic_feedback)
         .set_help(_("Enable haptic feedback for touchscreen controls"));
 
@@ -237,13 +244,6 @@ OptionsMenu::refresh()
       add_toggle(MNID_PAUSE_ON_FOCUSLOSS, _("Pause on focus loss"), &g_config->pause_on_focusloss)
         .set_help(_("Automatically pause the game when the window loses focus"));
 
-      // Note: there were complaints about Wayldn for steam (i think from the devs?), so it's off for now.
-#if (defined(__linux) || defined(__linux__) || defined(linux) || defined(__FreeBSD) || \
-     defined(__OPENBSD) || defined(__NetBSD)) && !(defined(STEAM_BUILD) || defined(__ANDROID__))
-      add_toggle(MNID_PREFER_WAYLAND, _("Prefer Wayland"), &g_config->prefer_wayland)
-        .set_help(_("If you experience any issues with Nvidia cards, your window border, or anything you believe is due to Wayland, disable this. (Requires restart)"));
-#endif
-
 #ifndef HIDE_NONMOBILE_OPTIONS
       add_toggle(MNID_CUSTOM_CURSOR, _("Use custom mouse cursor"), &g_config->custom_mouse_cursor).set_help(_("Whether the game renders its own cursor or uses the system's cursor"));
 
@@ -264,15 +264,18 @@ OptionsMenu::refresh()
       if (g_config->developer_mode)
         add_toggle(MNID_MAX_VIEWPORT, _("Force full viewport"), &g_config->max_viewport).set_help(_("Don't attempt to scale or apply any aspect ratio. Ignores some video settings. Useful for arcade cabinets or unusual screens."));
 
-#ifndef __EMSCRIPTEN__
+#if defined(NETWORKING) && !defined(__EMSCRIPTEN__)
       if (!g_config->disable_network)
         add_toggle(MNID_RELEASE_CHECK, _("Check for new releases"), &g_config->do_release_check)
           .set_help(_("Allows the game to perform checks for new SuperTux releases on startup and notify if any found."));
 #endif
 
+#ifdef NETWORKING
       add_toggle(MNID_DISABLE_NETWORK, _("Disable network"), &g_config->disable_network)
         .set_help(_("Prevents the game from connecting online"));
-
+#else
+      add_inactive(_("Network support is disabled."));
+#endif
       break;
     }
   }
@@ -409,29 +412,40 @@ OptionsMenu::add_window_resolutions()
 void
 OptionsMenu::add_resolutions()
 {
-  int display_mode_count = SDL_GetNumDisplayModes(0);
+  int display_mode_count;
+  SDL_DisplayID prim_display = SDL_GetPrimaryDisplay();
+  if (prim_display == 0)
+  {
+    log_warning << "Couldn't get primary display: " << SDL_GetError() << std::endl;
+    return; // at this point, we just give up.
+  }
+  std::unique_ptr<SDL_DisplayMode*, decltype(&SDL_free)> display_modes(
+    SDL_GetFullscreenDisplayModes(prim_display, &display_mode_count), &SDL_free);
+
+  if (display_modes == nullptr)
+  {
+    log_warning << "failed to get fullscreen display modes: " << SDL_GetError() << std::endl;
+    display_mode_count = 0;
+  }
+
   std::string last_display_mode;
   for (int i = 0; i < display_mode_count; ++i)
   {
-    SDL_DisplayMode mode;
-    int ret = SDL_GetDisplayMode(0, i, &mode);
-    if (ret != 0)
-    {
-      log_warning << "failed to get display mode: " << SDL_GetError() << std::endl;
-    }
-    else
-    {
-      std::ostringstream out;
-      out << mode.w << "x" << mode.h;
-      if (mode.refresh_rate)
-        out << "@" << mode.refresh_rate;
-      if (last_display_mode == out.str())
-        continue;
-      last_display_mode = out.str();
-      m_resolutions.list.insert(m_resolutions.list.begin(), out.str());
-    }
+    SDL_DisplayMode mode = *(display_modes.get()[i]);
+    std::ostringstream out;
+    out << mode.w << "x" << mode.h;
+    if (mode.refresh_rate)
+      out << "@" << mode.refresh_rate;
+    if (last_display_mode == out.str())
+      continue;
+    last_display_mode = out.str();
+    m_resolutions.list.insert(m_resolutions.list.begin(), out.str());
+
+    mode.internal = nullptr; // brevity
+    m_resolutions.data.insert(m_resolutions.data.begin(), {mode});
   }
   m_resolutions.list.push_back("Desktop");
+  m_resolutions.data.push_back({std::nullopt});
 
   std::string fullscreen_size_str = _("Desktop");
   std::ostringstream out;
@@ -458,6 +472,8 @@ OptionsMenu::add_resolutions()
   {
     m_resolutions.next = static_cast<int>(m_resolutions.list.size());
     m_resolutions.list.push_back(fullscreen_size_str);
+    // XXX: fill this in
+    m_resolutions.data.push_back({std::nullopt});
   }
 
   add_string_select(MNID_FULLSCREEN_RESOLUTION, _("Fullscreen Resolution"), &m_resolutions.next, m_resolutions.list)
@@ -489,6 +505,28 @@ OptionsMenu::add_vsync()
 
   add_string_select(MNID_VSYNC, _("VSync"), &m_vsyncs.next, m_vsyncs.list)
     .set_help(_("Set the VSync mode"));
+}
+
+void
+OptionsMenu::add_screen_shake_mode() {
+  m_screen_shake_modes.list.push_back(_("off"));
+  m_screen_shake_modes.list.push_back(_("reduced"));
+  m_screen_shake_modes.list.push_back(_("full"));
+
+  switch (g_config->screen_shake_mode) {
+    case Config::ScreenShakeMode::OFF:
+      m_screen_shake_modes.next = 0;
+      break;
+    case Config::ScreenShakeMode::REDUCED:
+      m_screen_shake_modes.next = 1;
+      break;
+    case Config::ScreenShakeMode::FULL:
+      m_screen_shake_modes.next = 2;
+      break;
+  }
+
+  add_string_select(MNID_SCREEN_SHAKE_MODE, _("Screen shake"), &m_screen_shake_modes.next, m_screen_shake_modes.list)
+    .set_help(_("Adjust amount of screen shake effects"));
 }
 
 void
@@ -689,20 +727,25 @@ OptionsMenu::menu_action(MenuItem& item)
       {
         int width;
         int height;
-        int refresh_rate;
+        float refresh_rate;
+        auto& mode = m_resolutions.data[m_resolutions.next].mode;
         if (m_resolutions.list[m_resolutions.next] == "Desktop")
         {
           g_config->fullscreen_size.width = 0;
           g_config->fullscreen_size.height = 0;
           g_config->fullscreen_refresh_rate = 0;
+          g_config->fullscreen_pixel_density = 0;
         }
-        else if (sscanf(m_resolutions.list[m_resolutions.next].c_str(), "%dx%d@%d",
+        else if (sscanf(m_resolutions.list[m_resolutions.next].c_str(), "%dx%d@%f",
                   &width, &height, &refresh_rate) == 3)
         {
           // do nothing, changes are only applied when toggling fullscreen mode
           g_config->fullscreen_size.width = width;
           g_config->fullscreen_size.height = height;
-          g_config->fullscreen_refresh_rate = refresh_rate;
+          g_config->fullscreen_refresh_rate = mode->refresh_rate;
+          g_config->fullscreen_refresh_rate_numerator = mode->refresh_rate_numerator;
+          g_config->fullscreen_refresh_rate_denominator = mode->refresh_rate_denominator;
+          g_config->fullscreen_pixel_density = mode->pixel_density;
         }
         else if (sscanf(m_resolutions.list[m_resolutions.next].c_str(), "%dx%d",
                        &width, &height) == 2)
@@ -710,6 +753,9 @@ OptionsMenu::menu_action(MenuItem& item)
             g_config->fullscreen_size.width = width;
             g_config->fullscreen_size.height = height;
             g_config->fullscreen_refresh_rate = 0;
+            g_config->fullscreen_refresh_rate_numerator = 0;
+            g_config->fullscreen_refresh_rate_numerator = 0;
+            g_config->fullscreen_pixel_density = 0;
         }
       }
       break;
@@ -760,6 +806,27 @@ OptionsMenu::menu_action(MenuItem& item)
       }
       g_config->vsync = vsync;
       VideoSystem::current()->set_vsync(vsync);
+    }
+    break;
+
+    case MNID_SCREEN_SHAKE_MODE:
+    {
+      switch (m_screen_shake_modes.next)
+      {
+        case 0:
+          g_config->screen_shake_mode = Config::ScreenShakeMode::OFF;
+          break;
+        case 1:
+          g_config->screen_shake_mode = Config::ScreenShakeMode::REDUCED;
+          break;
+        case 2:
+          g_config->screen_shake_mode = Config::ScreenShakeMode::FULL;
+          break;
+        default:
+          assert(false);
+          break;
+      }
+
     }
     break;
 
@@ -816,7 +883,10 @@ OptionsMenu::menu_action(MenuItem& item)
       break;
 
     case MNID_CUSTOM_CURSOR:
-      SDL_ShowCursor(g_config->custom_mouse_cursor ? 0 : 1);
+      if (g_config->custom_mouse_cursor)
+        SDL_HideCursor();
+      else
+        SDL_ShowCursor();
       break;
 
     case MNID_MAX_VIEWPORT:
@@ -832,7 +902,7 @@ OptionsMenu::menu_action(MenuItem& item)
 
     case MNID_DISABLE_NETWORK:
       refresh();
-      set_active_item(MNID_DISABLE_NETWORK);
+      set_active_item_id(MNID_DISABLE_NETWORK);
       break;
 
     default:

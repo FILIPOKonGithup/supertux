@@ -156,6 +156,7 @@ Addon::parse(const ReaderMapping& mapping)
     mapping.get("url", addon->m_url);
     mapping.get("md5", addon->m_md5);
     mapping.get("format", addon->m_format);
+    mapping.get("screenshots-base-url", addon->m_screenshots_base_url);
     std::optional<ReaderCollection> screenshots_reader;
     if (mapping.get("screenshots", screenshots_reader))
     {
@@ -240,20 +241,17 @@ Addon::get_filename() const
 bool
 Addon::is_levelset() const
 {
-  // Determines if the add-on is a levelset.
   return m_type == WORLD || m_type == WORLDMAP || m_type == LEVELSET;
 }
 
 bool
 Addon::overrides_data() const
 {
-  // Determines if the add-on should override game data.
   return m_type == RESOURCEPACK;
 }
 
 bool
 Addon::requires_restart() const
 {
-  // Determines if the add-on requires a restart to function after enabled.
   return m_type == LANGUAGEPACK;
 }

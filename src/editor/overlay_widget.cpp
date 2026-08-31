@@ -53,6 +53,9 @@ const int snap_grid_sizes[4] = {4, 8, 16, 32};
 
 const int MAX_FILL_STACK_SIZE = 1000000;
 
+// TODO: This should be configurable
+constexpr float PAN_SCROLLING_SCALE = 2.5f;
+
 bool is_position_inside_tilemap(const TileMap* tilemap, const Vector& pos)
 {
   return pos.x >= 0 && pos.y >= 0 &&
@@ -80,6 +83,7 @@ EditorOverlayWidget::EditorOverlayWidget(Editor& editor) :
   m_dragging(false),
   m_dragging_right(false),
   m_scrolling(false),
+  m_scrolling_scale(1.0f),
   m_drag_start(0, 0),
   m_dragged_object(nullptr),
   m_hovered_object(nullptr),
@@ -179,6 +183,8 @@ EditorOverlayWidget::drag_rect() const
 void
 EditorOverlayWidget::input_tile(const Vector& pos, uint32_t tile)
 {
+  if (m_editor.m_pen_down)
+    tile = 0;
   auto tilemap = m_editor.get_selected_tilemap();
   if (!tilemap || !is_position_inside_tilemap(tilemap, pos)) return;
 
@@ -209,7 +215,8 @@ EditorOverlayWidget::input_autotile_erase(const Vector& pos)
 void
 EditorOverlayWidget::put_tiles(const Vector& target_tile, TileSelection* tiles)
 {
-  m_editor.get_selected_tilemap()->save_state();
+  if (m_editor.get_selected_tilemap())
+    m_editor.get_selected_tilemap()->save_state();
 
   // Don't put tile if the position (or tile) hasn't changed
   if (floor(m_last_target_pos.x) == floor(target_tile.x) &&
@@ -230,7 +237,7 @@ EditorOverlayWidget::put_tiles(const Vector& target_tile, TileSelection* tiles)
         auto autotileset = get_current_autotileset();
         if (autotileset)
         {
-          if (tile == 0)
+          if (tile == 0 || m_editor.m_pen_down)
             input_autotile_erase(target_tile + add_tile);
           else
             input_autotile(target_tile + add_tile, tile);
@@ -501,6 +508,8 @@ EditorOverlayWidget::replace()
   auto tiles = m_editor.get_selected_tiles();
   auto tiles_width = tiles->m_width;
   auto tiles_height = tiles->m_height;
+
+  if (tiles_width == 0 || tiles_height == 0) return;
 
   uint32_t replace_tile = tilemap->get_tile_id(m_hovered_tile);
 
@@ -918,6 +927,12 @@ EditorOverlayWidget::process_left_click()
 
     case InputType::NONE:
     case InputType::OBJECT:
+      if (m_editor.m_pen_down)
+      {
+        grab_object();
+        rubber_object();
+      }
+
       if (m_hovered_object)
         m_editor.select_object(m_hovered_object.get());
 
@@ -982,8 +997,13 @@ EditorOverlayWidget::process_right_click()
 void
 EditorOverlayWidget::process_middle_click()
 {
-  m_previous_mouse_pos = m_mouse_pos;
-  m_scrolling = true;
+  // some window managers may try to send a middle click alongside a pen down
+  // event, which we want to avoid. It makes erasing finnicky.
+  if (!m_editor.m_pen_down)
+  {
+    m_previous_mouse_pos = m_mouse_pos;
+    m_scrolling = true;
+  }
 }
 
 Rectf
@@ -1081,6 +1101,8 @@ EditorOverlayWidget::on_mouse_button_up(const SDL_MouseButtonEvent& button)
   }
 
   m_dragging = false;
+  m_last_target_pos = Vector(std::numeric_limits<int>::min(),
+                             std::numeric_limits<int>::min());
 
   // Return true anyways, because that's how it worked when this function only
   // had `m_dragging = false;` in its body.
@@ -1162,7 +1184,9 @@ EditorOverlayWidget::on_mouse_motion(const SDL_MouseMotionEvent& motion)
   }
   else if (m_scrolling)
   {
-    m_editor.scroll(m_previous_mouse_pos - m_mouse_pos);
+    // TODO: would be nice if this was configurable
+    // for convenience, since drawing tablets tend to be rather large, we scale larger.
+    m_editor.scroll((m_previous_mouse_pos - m_mouse_pos) * m_scrolling_scale);
     m_previous_mouse_pos = m_mouse_pos;
     return true;
   }
@@ -1175,7 +1199,7 @@ EditorOverlayWidget::on_mouse_motion(const SDL_MouseMotionEvent& motion)
 bool
 EditorOverlayWidget::on_key_up(const SDL_KeyboardEvent& key)
 {
-  std::uint16_t mod = key.keysym.mod;
+  std::uint16_t mod = key.mod;
 
   if (!m_editor.m_ctrl_pressed)
   {
@@ -1184,22 +1208,35 @@ EditorOverlayWidget::on_key_up(const SDL_KeyboardEvent& key)
     // Hovered objects depend on if ctrl is pressed
     hover_object();
   }
-  else if (mod & KMOD_ALT)
+  else if (mod & SDL_KMOD_ALT)
   {
     alt_pressed = false;
   }
+
+  if (key.key == SDLK_SPACE)
+  {
+    m_scrolling = false;
+    m_scrolling_scale = 1.0f;
+  }
+
   return true;
 }
 
 bool
 EditorOverlayWidget::on_key_down(const SDL_KeyboardEvent& key)
 {
-  SDL_Keycode sym = key.keysym.sym;
-  std::uint16_t mod = key.keysym.mod;
+  SDL_Keycode sym = key.key;
+  std::uint16_t mod = key.mod;
 
   if (sym == SDLK_F8)
   {
     g_config->editor_render_grid = !g_config->editor_render_grid;
+  }
+  else if (sym == SDLK_SPACE)
+  {
+    m_scrolling = true;
+    m_previous_mouse_pos = m_mouse_pos;
+    m_scrolling_scale = PAN_SCROLLING_SCALE;
   }
   else if (sym == SDLK_F7)
   {
@@ -1216,7 +1253,7 @@ EditorOverlayWidget::on_key_down(const SDL_KeyboardEvent& key)
     // Hovered objects depend on if ctrl is pressed.
     hover_object();
   }
-  else if (mod & KMOD_ALT)
+  else if (mod & SDL_KMOD_ALT)
   {
     alt_pressed = true;
   }
@@ -1412,6 +1449,7 @@ EditorOverlayWidget::draw_tile_grid(DrawingContext& context, int tile_size, bool
   {
     context.color().draw_line(from, to, col, current_tm->get_layer());
   };
+
   if (draw_shadow)
   {
     Vector viewport_scale = VideoSystem::current()->get_viewport().get_scale();
@@ -1462,10 +1500,8 @@ EditorOverlayWidget::draw_tilemap_border(DrawingContext& context)
   Vector start = tile_screen_pos( Vector(0, 0) );
   Vector end = tile_screen_pos( Vector(static_cast<float>(current_tm->get_width()),
                                        static_cast<float>(current_tm->get_height())) );
-  context.color().draw_line(start, Vector(start.x, end.y), Color(1, 0, 1), current_tm->get_layer());
-  context.color().draw_line(start, Vector(end.x, start.y), Color(1, 0, 1), current_tm->get_layer());
-  context.color().draw_line(Vector(start.x, end.y), end, Color(1, 0, 1), current_tm->get_layer());
-  context.color().draw_line(Vector(end.x, start.y), end, Color(1, 0, 1), current_tm->get_layer());
+  Rectf rect = Rectf(start, end);
+  context.color().draw_rect(rect, Color(1, 0, 1), current_tm->get_layer());
 }
 
 void
@@ -1497,10 +1533,10 @@ EditorOverlayWidget::draw_tilemap_outer_shading(DrawingContext& context)
 void
 EditorOverlayWidget::draw_path(DrawingContext& context)
 {
-  if (!m_edited_path) return;
-  if (!m_selected_object) return;
-  if (!m_selected_object->is_valid()) return;
-  if (!m_edited_path->is_valid()) return;
+  if (!m_edited_path || !m_edited_path->is_valid())
+    return;
+  if (!m_selected_object || !m_selected_object->is_valid())
+    return;
 
   auto path_nodes = m_edited_path->get_path().m_nodes;
 

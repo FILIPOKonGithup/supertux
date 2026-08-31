@@ -39,6 +39,7 @@ cmake_minimum_required(VERSION 3.22)
 
 ## Project name to use as command prefix.
 
+option(FLATPAK "Produce a flatpak optimized build" OFF)
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_CURRENT_SOURCE_DIR}/mk/cmake)
 if(ANDROID)
   include(SuperTux/Android)
@@ -123,7 +124,7 @@ else()
 endif()
 
 ## Determine whether static linking for SimpleSquirrel should be defaulted to
-if(MSVC OR ANDROID)
+if(MSVC OR ANDROID OR EMSCRIPTEN)
   option(USE_STATIC_SIMPLESQUIRREL "Statically link the SimpleSquirrel library" ON)
 else()
   option(USE_STATIC_SIMPLESQUIRREL "Statically link the SimpleSquirrel library" OFF)
@@ -156,9 +157,11 @@ if(CMAKE_SYSTEM_NAME MATCHES "Linux")
 endif()
 
 option(ENABLE_OPENGL "Enable OpenGL support" ON)
+option(ENABLE_NETWORKING "Turns on networking features, thus requiring libcurl" ON)
 
 # CI builds should never rely on this, as system SDL2_TTF has no RAQM support, causing Arabic to not be rendered properly.
-option(USE_SYSTEM_SDL2_TTF "Build SuperTux with system SDL2_TTF" OFF)
+# TODO: SDL3
+#option(USE_SYSTEM_SDL2_TTF "Build SuperTux with system SDL2_TTF" OFF)
 
 # Find dependencies
 include(SuperTux/AddPackage)
@@ -176,25 +179,28 @@ add_package(TARGET glm
   PKG glm PKG_USE glm::glm CONFIG REQUIRED PKG_CONFIG glm)
 add_package(TARGET Freetype
   PKG Freetype PKG_USE Freetype::Freetype CONFIG REQUIRED PKG_CONFIG freetype2)
-if(NOT USE_SYSTEM_SDL2_TTF)
-  # System-installed SDL2_TTF will not have RAQM support, so no need to look for that.
-  add_package(TARGET RAQM
-    PKG RAQM PKG_USE RAQM CONFIG PKG_CONFIG libraqm raqm)
-endif()
+# TODO: SDL3
+# if(NOT USE_SYSTEM_SDL2_TTF)
+#   # System-installed SDL2_TTF will not have RAQM support, so no need to look for that.
+#   add_package(TARGET RAQM
+#     PKG RAQM PKG_USE RAQM CONFIG PKG_CONFIG libraqm raqm)
+# endif()
 
 if(NOT EMSCRIPTEN)
-  add_package(TARGET SDL2
-    PKG SDL2 PKG_USE SDL2::SDL2 CONFIG REQUIRED PKG_CONFIG sdl2 SDL2
+  add_package(TARGET SDL3
+    PKG SDL3 PKG_USE SDL3::SDL3 CONFIG REQUIRED PKG_CONFIG sdl3 SDL3
     ${SUPERTUX_ANDROID_PREFER_PKGCONF})
-  add_package(TARGET SDL2_image
-    PKG SDL2_image PKG_USE SDL2_image::SDL2_image CONFIG REQUIRED PKG_CONFIG SDL2_image sdl2_image
+  add_package(TARGET SDL3_image
+    PKG SDL3_image PKG_USE SDL3_image::SDL3_image CONFIG REQUIRED PKG_CONFIG SDL3_image sdl3_image
     ${SUPERTUX_ANDROID_PREFER_PKGCONF})
-  if (USE_SYSTEM_SDL2_TTF)
-    add_package(TARGET SDL2_ttf
-      PKG SDL2_ttf PKG_USE SDL2_ttf::SDL2_ttf CONFIG REQUIRED PKG_CONFIG SDL2_ttf sdl2_ttf)
-  endif()
+  add_package(TARGET SDL3_ttf
+    PKG SDL3_ttf PKG_USE SDL3_ttf::SDL3_ttf CONFIG REQUIRED PKG_CONFIG SDL3_ttf sdl3_ttf)
   add_package(TARGET libcurl
     PKG CURL PKG_USE CURL::libcurl PKG_CONFIG libcurl)
+  if(ENABLE_NETWORKING)
+    add_package(TARGET libcurl
+      PKG CURL PKG_USE CURL::libcurl PKG_CONFIG libcurl)
+  endif()
   add_package(TARGET OpenAL
     PKG OpenAL PKG_USE OpenAL::OpenAL CONFIG REQUIRED PKG_CONFIG OpenAL openal)
   add_package(TARGET Ogg
@@ -207,51 +213,77 @@ else()
   include(SuperTux/Emscripten)
 endif()
 
-if(TARGET RAQM AND NOT USE_SYSTEM_SDL2_TTF)
-  message(STATUS "Compiling SDL_ttf with RAQM")
-  set(SDL2TTF_RAQM ON)
-endif()
+# TODO: SDL3
+# if(TARGET RAQM AND NOT USE_SYSTEM_SDL2_TTF)
+#   message(STATUS "Compiling SDL_ttf with RAQM")
+#   set(SDL3TTF_RAQM ON)
+# endif()
 
-if(USE_SYSTEM_SDL2_TTF)
-  message(WARNING "Building with system-wide SDL_TTF will cause bi-directional (e.g. Arabic) scriptures to not be displayed properly.")
-endif()
+# if(USE_SYSTEM_SDL2_TTF)
+#   message(WARNING "Building with system-wide SDL_TTF will cause bi-directional (e.g. Arabic) scriptures to not be displayed properly.")
+# endif()
 
 add_subdirectory(external/sexp-cpp EXCLUDE_FROM_ALL)
-if(NOT USE_SYSTEM_SDL2_TTF)
-  add_subdirectory(external/SDL_ttf EXCLUDE_FROM_ALL)
-endif()
+# TODO: SDL3
+# if(NOT USE_SYSTEM_SDL2_TTF)
+#   add_subdirectory(external/SDL_ttf EXCLUDE_FROM_ALL)
+# endif()
 add_subdirectory(external/SDL_SavePNG EXCLUDE_FROM_ALL)
 add_subdirectory(external/simplesquirrel EXCLUDE_FROM_ALL)
 add_subdirectory(external/partio_zip EXCLUDE_FROM_ALL)
 add_subdirectory(external/findlocale EXCLUDE_FROM_ALL)
 add_subdirectory(external/obstack EXCLUDE_FROM_ALL)
+set(TINYGETTEXT_SDL_VERSION "3")
 add_subdirectory(external/tinygettext EXCLUDE_FROM_ALL)
 
 if(ENABLE_DISCORD)
   add_subdirectory(external/discord-sdk EXCLUDE_FROM_ALL)
 endif()
 
+set(USE_GL_LIBRARY "glew" CACHE STRING "Which OpenGL function library to choose from (e.g. glew, libepoxy)")
+set_property(CACHE USE_GL_LIBRARY PROPERTY STRINGS glew libepoxy)
+
 set(HAVE_OPENGL NO)
-# OpenGL for Emscripten is added in Emscripten.cmake
-if(ENABLE_OPENGL AND NOT EMSCRIPTEN)
+set(HAVE_CURL NO)
+set(HAVE_GLEW NO)
+set(HAVE_EPOXY NO)
+if(NOT ENABLE_OPENGL)
+  message(STATUS "OpenGL support is disabled, as requested.")
+elseif(ANDROID)
+  # SDL already adds OpenGLES to the linker command
+  set(HAVE_OPENGL YES)
+  set(USE_OPENGLES2 YES)
+elseif(NOT EMSCRIPTEN)
   set(OpenGL_GL_PREFERENCE "LEGACY")
-  find_package(OpenGL)
+  find_package(OpenGL QUIET)
 
   if(OPENGL_FOUND)
-    add_package(TARGET GLEW
-      PKG GLEW PKG_USE GLEW::GLEW CONFIG REQUIRED PKG_CONFIG glew
-      PREFER_PKGCONFIG)
+    if (USE_GL_LIBRARY STREQUAL "glew")
+      message(STATUS "Using glew")
+      add_package(TARGET GLEW
+        PKG GLEW PKG_USE GLEW::GLEW CONFIG REQUIRED PKG_CONFIG glew
+        PREFER_PKGCONFIG)
+      set(HAVE_OPENGL "${ADDPKG_GLEW_FOUND}")
+      set(HAVE_GLEW ON)
+    elseif (USE_GL_LIBRARY STREQUAL "libepoxy")
+      message(STATUS "Using libepoxy")
+      add_package(TARGET libepoxy
+        PKG libepoxy PKG_CONFIG epoxy libepoxy
+        PREFER_PKGCONFIG)
+      set(HAVE_OPENGL "${ADDPKG_libepoxy_FOUND}")
+      set(HAVE_EPOXY ON)
+    else()
+      message(FATAL_ERROR "An invalid GL library was chosen! Got \"${USE_GL_LIBRARY}\"")
+    endif()
+    if(HAVE_OPENGL)
+      message(STATUS "OpenGL & ${USE_GL_LIBRARY} found! Enabling OpenGL support.")
+    else()
+      message(STATUS "${USE_GL_LIBRARY} not found! OpenGL support is disabled.")
+    endif()
   else()
     message(STATUS "OpenGL not found! OpenGL support is disabled.")
   endif()
 
-  set(HAVE_OPENGL "${ADDPKG_GLEW_FOUND}")
-
-  if(HAVE_OPENGL AND OPENGL_FOUND)
-    message(STATUS "OpenGL & GLEW found! enabling OpenGL support.")
-  elseif(OPENGL_FOUND)
-    message(STATUS "Glew not found! OpenGL support is disabled.")
-  endif()
 endif()
 
 ## Build stuff
@@ -371,6 +403,9 @@ endif()
 
 if(EMSCRIPTEN)
   target_link_options(supertux2 PUBLIC -sEXPORTED_FUNCTIONS=['_main','_set_resolution','_save_config','_onDownloadProgress','_onDownloadFinished','_onDownloadError','_onDownloadAborted','_getExceptionMessage'] PUBLIC -sEXPORTED_RUNTIME_METHODS=['ccall','cwrap'])
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  # This option makes symbol names available for libc's backtrace().
+  target_link_options(supertux2 PUBLIC -rdynamic)
 endif()
 
 set_target_properties(supertux2 PROPERTIES OUTPUT_NAME "supertux2")
@@ -394,7 +429,6 @@ else()
   set_property(TARGET squirrel PROPERTY INTERPROCEDURAL_OPTIMIZATION OFF)
 endif()
 
-
 # Include altivec wrapper on ppc
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "^ppc.*")
   target_include_directories(supertux2 PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src/ppc)
@@ -408,17 +442,17 @@ else()
 endif()
 
 target_link_libraries(supertux2 PUBLIC
-  tinygettext sexp SDL_SavePNG SDL2_ttf
+  tinygettext sexp SDL_SavePNG SDL3_ttf
   PartioZip OpenAL FindLocale obstack glm fmt PhysFS)
 target_compile_definitions(supertux2 PUBLIC GLM_ENABLE_EXPERIMENTAL)
 if(NOT EMSCRIPTEN)
   target_link_libraries(supertux2 PUBLIC
-    # SDL2_image
-    SDL2_image
-    # SDL2 main (windows?)
-    $<TARGET_NAME_IF_EXISTS:SDL2::SDL2main>
-    # SDL2
-    SDL2
+    # SDL3_image
+    SDL3_image
+    # SDL3 main (windows?)
+    $<TARGET_NAME_IF_EXISTS:SDL3::SDL3main>
+    # SDL3
+    SDL3
   )
   target_link_libraries(supertux2 PUBLIC
     Ogg
@@ -426,12 +460,18 @@ if(NOT EMSCRIPTEN)
     VorbisFile
   )
 
-  if(ADDPKG_CURL_FOUND)
+  if(ADDPKG_CURL_FOUND AND ENABLE_NETWORKING)
     target_link_libraries(supertux2 PUBLIC libcurl)
+    set(HAVE_CURL YES)
   endif()
 
-  if(HAVE_OPENGL)
-    target_link_libraries(supertux2 PUBLIC OpenGL::GL GLEW)
+  if(HAVE_OPENGL AND NOT ANDROID)
+    target_link_libraries(supertux2 PUBLIC OpenGL::GL)
+    if(USE_GL_LIBRARY STREQUAL "glew")
+      target_link_libraries(supertux2 PUBLIC GLEW)
+    else()
+      target_link_libraries(supertux2 PUBLIC libepoxy)
+    endif()
   endif()
 
   if(ENABLE_DISCORD)
@@ -454,21 +494,22 @@ configure_file(config.h.in ${CMAKE_BINARY_DIR}/config.h)
 if(ANDROID)
   set(ANDROID_PROJECT_DIR "${PROJECT_SOURCE_DIR}/mk/android/" CACHE PATH
           "Path to the root of the root of the android project")
-  if(NOT EXISTS "${ANDROID_PROJECT_DIR}/app/src/main/assets/data.zip")
-    get_filename_component(DATADIR ${PROJECT_SOURCE_DIR}/data REALPATH)
-    if(NOT EXISTS ${ANDROID_PROJECT_DIR}/app/src/main/assets)
-      file(MAKE_DIRECTORY ${ANDROID_PROJECT_DIR}/app/src/main/assets)
-    endif()
-    file(GLOB DATA_CONTENTS RELATIVE ${DATADIR} ${DATADIR}/*)
-    #file(ARCHIVE_CREATE OUTPUT ${ANDROID_PROJECT_DIR}/app/src/main/assets/data.zip PATHS ${DATA_CONTENTS} FORMAT zip)
-    execute_process(COMMAND ${CMAKE_COMMAND} -E tar "cfv"
-            "${ANDROID_PROJECT_DIR}/app/src/main/assets/data.zip"
-            --format=zip
-            ${DATA_CONTENTS}
+  set(ANDROID_ASSETS_DIR "${ANDROID_PROJECT_DIR}/assetpack/src/main/assets")
+  set(ANDROID_DATA_ZIP "${ANDROID_ASSETS_DIR}/data.zip")
+  get_filename_component(DATA_DIR ${PROJECT_SOURCE_DIR}/data REALPATH)
 
-            WORKING_DIRECTORY ${DATADIR}
-    )
+  if(NOT EXISTS "${ANDROID_ASSETS_DIR}")
+    file(MAKE_DIRECTORY "${ANDROID_ASSETS_DIR}")
   endif()
+
+  file(GLOB DATA_CONTENTS RELATIVE "${DATA_DIR}" "${DATA_DIR}/*")
+  add_custom_command(
+    OUTPUT "${ANDROID_DATA_ZIP}"
+    COMMAND ${CMAKE_COMMAND} -E tar "cfv" "${ANDROID_DATA_ZIP}" --format=zip ${DATA_CONTENTS}
+    WORKING_DIRECTORY "${DATA_DIR}"
+    COMMENT "Creating data.zip for android assets"
+  )
+  target_sources(supertux2 PRIVATE "${ANDROID_DATA_ZIP}")
 endif()
 
 ## Build tests

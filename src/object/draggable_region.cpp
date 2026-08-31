@@ -38,26 +38,15 @@ DraggableRegion::DraggableRegion(Color color, const ReaderMapping &reader) :
 void
 DraggableRegion::draw_draggable_box(DrawingContext& context)
 {
-  if (!Editor::is_active() && !g_debug.show_collision_rects)
-    return;
-
   Rectf& box = m_col.m_bbox;
-  if (Editor::current()->get_draggables_visible())
+  if (Editor::is_active() && Editor::current()->get_draggables_visible())
   {
     context.color().draw_filled_rect(box, m_color, 0.0f, LAYER_OBJECTS);
     return;
   }
 
-  context.color().draw_line(
-        { box.get_left(), box.get_top() },
-        { box.get_right(), box.get_top() }, m_color, LAYER_OBJECTS);
-  context.color().draw_line(
-        { box.get_left(), box.get_top() },
-        { box.get_left(), box.get_bottom() }, m_color, LAYER_OBJECTS);
-  context.color().draw_line(
-        { box.get_left(), box.get_bottom() },
-        { box.get_right(), box.get_bottom() }, m_color, LAYER_OBJECTS);
-  context.color().draw_line(
-        { box.get_right(), box.get_top() },
-        { box.get_right(), box.get_bottom() }, m_color, LAYER_OBJECTS);
+  if (!g_debug.show_collision_rects)
+    return;
+
+  context.color().draw_rect(box, m_color, LAYER_OBJECTS);
 }

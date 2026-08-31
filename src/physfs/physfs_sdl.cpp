@@ -17,27 +17,30 @@
 #include "physfs/physfs_sdl.hpp"
 
 #include <physfs.h>
+#include <SDL3/SDL.h>
+#include <SDL3/SDL_iostream.h>
+
+#include "physfs/util.hpp"
+#include "util/file_system.hpp"
+#include "util/log.hpp"
+
+#include <iostream>
 #include <sstream>
 #include <stdexcept>
 #include <assert.h>
 #include <stdio.h>
 
-#include "physfs/util.hpp"
-#include "util/log.hpp"
-
-#include <iostream>
-
 namespace {
 
-Sint64 funcSize(struct SDL_RWops* context)
+Sint64 funcSize(void* userdata)
 {
-  PHYSFS_file* file = static_cast<PHYSFS_file*>(context->hidden.unknown.data1);
-  return PHYSFS_fileLength(file);
+  PHYSFS_file* file = static_cast<PHYSFS_file*>(userdata);
+  return (Sint64)PHYSFS_fileLength(file);
 }
 
-Sint64 funcSeek(struct SDL_RWops* context, Sint64 offset, int whence)
+Sint64 funcSeek(void *userdata, Sint64 offset, SDL_IOWhence whence)
 {
-  PHYSFS_file* file = static_cast<PHYSFS_file*>(context->hidden.unknown.data1);
+  PHYSFS_file* file = static_cast<PHYSFS_file*>(userdata);
   int res;
   switch (whence) {
     case SEEK_SET:
@@ -64,49 +67,80 @@ Sint64 funcSeek(struct SDL_RWops* context, Sint64 offset, int whence)
   return i;
 }
 
-size_t funcRead(struct SDL_RWops* context, void* ptr, size_t size, size_t maxnum)
+size_t funcRead(void *userdata, void *ptr, size_t size, SDL_IOStatus *status)
 {
-  PHYSFS_file* file = static_cast<PHYSFS_file*>(context->hidden.unknown.data1);
+  PHYSFS_file* file = static_cast<PHYSFS_file*>(userdata);
+  PHYSFS_sint64 res = PHYSFS_readBytes(file, ptr, (PHYSFS_uint64)size);
 
-  PHYSFS_sint64 res = PHYSFS_readBytes(file, ptr, size * maxnum);
+  if (PHYSFS_getLastErrorCode() == PHYSFS_ERR_OK)
+  {
+    *status = SDL_IO_STATUS_READY;
+  }
+  else
+  {
+    *status = SDL_IO_STATUS_ERROR;
+  }
+
   if (res < 0)
   {
     return 0;
   }
   else
   {
-    return static_cast<size_t>(res / size);
+    return static_cast<size_t>(res);
   }
 }
 
-size_t funcWrite(struct SDL_RWops* context, const void* ptr, size_t size, size_t num)
+size_t funcWrite(void *userdata, const void *ptr, size_t size, SDL_IOStatus *status)
 {
-  PHYSFS_file* file = static_cast<PHYSFS_file*>(context->hidden.unknown.data1);
+  PHYSFS_file* file = static_cast<PHYSFS_file*>(userdata);
 
-  PHYSFS_sint64 res = PHYSFS_writeBytes(file, ptr, size * num);
+  PHYSFS_sint64 res = PHYSFS_writeBytes(file, ptr, size);
+
+  if (PHYSFS_getLastErrorCode() == PHYSFS_ERR_OK)
+  {
+    *status = SDL_IO_STATUS_READY;
+  }
+  else
+  {
+    *status = SDL_IO_STATUS_ERROR;
+  }
+
   if (res < 0)
   {
     return 0;
   }
   else
   {
-    return static_cast<size_t>(res / size);
+    return static_cast<size_t>(res);
   }
 }
 
-int funcClose(struct SDL_RWops* context)
+bool funcFlush(void *userdata, SDL_IOStatus *status) {
+    PHYSFS_file* file = static_cast<PHYSFS_file*>(userdata);
+
+    if (PHYSFS_flush(file) != 0) {
+        *status = SDL_IO_STATUS_READY;
+        return true;
+    }
+
+    *status = SDL_IO_STATUS_ERROR;
+
+    return false;
+}
+
+bool funcClose(void *userdata)
 {
-  PHYSFS_file* file = static_cast<PHYSFS_file*>(context->hidden.unknown.data1);
+  PHYSFS_file* file = static_cast<PHYSFS_file*>(userdata);
 
   PHYSFS_close(file);
-  delete context;
 
-  return 0;
+  return false;
 }
 
 } // namespace
 
-SDL_RWops* get_physfs_SDLRWops(const std::string& filename)
+SDL_IOStream* get_physfs_SDLRWops(const std::string& filename)
 {
   // check this as PHYSFS seems to be buggy and still returns a
   // valid pointer in this case
@@ -122,19 +156,18 @@ SDL_RWops* get_physfs_SDLRWops(const std::string& filename)
     throw std::runtime_error(msg.str());
   }
 
-  SDL_RWops* ops = new SDL_RWops;
-  ops->size = funcSize;
-  ops->seek = funcSeek;
-  ops->read = funcRead;
-  ops->write = funcWrite;
-  ops->close = funcClose;
-  ops->type = SDL_RWOPS_UNKNOWN;
-  ops->hidden.unknown.data1 = file;
-
-  return ops;
+  SDL_IOStreamInterface iface;
+  SDL_INIT_INTERFACE(&iface);
+  iface.size = funcSize;
+  iface.seek = funcSeek;
+  iface.read = funcRead;
+  iface.write = funcWrite;
+  iface.flush = funcFlush;
+  iface.close = funcClose;
+  return SDL_OpenIO(&iface, (void*)file);
 }
 
-SDL_RWops* get_writable_physfs_SDLRWops(const std::string& filename)
+SDL_IOStream* get_writable_physfs_SDLRWops(const std::string& filename)
 {
   // check this as PHYSFS seems to be buggy and still returns a
   // valid pointer in this case
@@ -150,14 +183,13 @@ SDL_RWops* get_writable_physfs_SDLRWops(const std::string& filename)
     throw std::runtime_error(msg.str());
   }
 
-  SDL_RWops* ops = new SDL_RWops;
-  ops->size = funcSize;
-  ops->seek = funcSeek;
-  ops->read = funcRead;
-  ops->write = funcWrite;
-  ops->close = funcClose;
-  ops->type = SDL_RWOPS_UNKNOWN;
-  ops->hidden.unknown.data1 = file;
-
-  return ops;
+  SDL_IOStreamInterface iface;
+  SDL_INIT_INTERFACE(&iface);
+  iface.size = funcSize;
+  iface.seek = funcSeek;
+  iface.read = funcRead;
+  iface.write = funcWrite;
+  iface.flush = funcFlush;
+  iface.close = funcClose;
+  return SDL_OpenIO(&iface, (void*)file);
 }

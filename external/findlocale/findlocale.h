@@ -3,10 +3,11 @@
 
 #ifdef __ANDROID__
 #include <jni.h>
+#include <android/log.h>
 
 // SDL headers not recognized, forward declaring
 
-void* SDL_AndroidGetJNIEnv();
+void* SDL_GetAndroidJNIEnv();
 char* SDL_iconv_string(const char*, const char*, const char*, size_t);
 #endif
 

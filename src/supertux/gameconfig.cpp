@@ -17,6 +17,8 @@
 #include "supertux/gameconfig.hpp"
 
 #include <ctime>
+#include <config.h>
+#include <string>
 
 #include "editor/overlay_widget.hpp"
 #include "math/util.hpp"
@@ -39,6 +41,9 @@ Config::Config() :
   profile(1),
   fullscreen_size(0, 0),
   fullscreen_refresh_rate(0),
+  fullscreen_refresh_rate_numerator(0),
+  fullscreen_refresh_rate_denominator(0),
+  fullscreen_pixel_density(0),
   window_size(1280, 800),
   window_resizable(true),
   aspect_size(0, 0), // Auto detect.
@@ -64,6 +69,7 @@ Config::Config() :
   sound_volume(100),
   music_volume(50),
   flash_intensity(50),
+  screen_shake_mode(ScreenShakeMode::FULL),
   max_viewport(false),
   fancy_gfx(true),
   precise_scrolling(true),
@@ -78,6 +84,7 @@ Config::Config() :
   ignore_joystick_axis(false),
   mobile_controls(false),
   m_mobile_controls_scale(1.3f),
+  touch_controls_visible(true),
   addons(),
   developer_mode(false),
   christmas_mode(false),
@@ -93,7 +100,6 @@ Config::Config() :
   do_release_check(false),
   disable_network(true),
   custom_title_levels(true),
-  prefer_wayland(true),
 #ifdef ENABLE_DISCORD
   enable_discord(false),
 #endif
@@ -134,18 +140,15 @@ Config::Config() :
   editor_last_edited_level(),
   multiplayer_auto_manage_players(true),
   multiplayer_multibind(false),
-#if SDL_VERSION_ATLEAST(2, 0, 9)
   multiplayer_buzz_controllers(true),
-#else
-  // Will be loaded and saved anyways, to retain the setting. This is helpful
-  // for users who frequently switch between versions compiled with a newer SDL
-  // and those with an older SDL; they won't have to check the setting each time.
-  multiplayer_buzz_controllers(false),
-#endif
+  multiplayer_no_limit(false),
   touch_haptic_feedback(true),
   touch_just_directional(true),
   repository_url()
 {
+  int num_touch_devices;
+  SDL_GetTouchDevices(&num_touch_devices);
+  mobile_controls = (num_touch_devices > 0);
 }
 
 void
@@ -179,7 +182,9 @@ Config::load()
   config_mapping.get("custom_mouse_cursor", custom_mouse_cursor);
   config_mapping.get("custom_system_cursor", custom_system_cursor);
   config_mapping.get("do_release_check", do_release_check);
+#ifdef NETWORKING // don't bother parsing this otherwise, since it's true by default.
   config_mapping.get("disable_network", disable_network);
+#endif
   config_mapping.get("custom_title_levels", custom_title_levels);
 
   std::optional<ReaderMapping> config_integrations_mapping;
@@ -229,7 +234,7 @@ Config::load()
     interface_colors_mapping->get("menuhelpfrontcolor", menuhelpfrontcolor_, ColorScheme::Menu::help_back_color.toVector());
     interface_colors_mapping->get("labeltextcolor", labeltextcolor_, ColorScheme::Menu::label_color.toVector());
     interface_colors_mapping->get("activetextkcolor", activetextcolor_, ColorScheme::Menu::active_color.toVector());
-    interface_colors_mapping->get("hlcolor", hlcolor_, ColorScheme::Menu::hl_color.toVector());
+    interface_colors_mapping->get("hlcolor2", hlcolor_, ColorScheme::Menu::hl_color.toVector());
     interface_colors_mapping->get("editorcolor", editorcolor_, ColorScheme::Editor::default_color.toVector());
     interface_colors_mapping->get("editorhovercolor", editorhovercolor_, ColorScheme::Editor::hover_color.toVector());
     interface_colors_mapping->get("editorgrabcolor", editorgrabcolor_, ColorScheme::Editor::grab_color.toVector());
@@ -293,6 +298,7 @@ Config::load()
   config_mapping.get("multiplayer_auto_manage_players", multiplayer_auto_manage_players);
   config_mapping.get("multiplayer_multibind", multiplayer_multibind);
   config_mapping.get("multiplayer_buzz_controllers", multiplayer_buzz_controllers);
+  config_mapping.get("multiplayer_no_limit", multiplayer_no_limit);
   config_mapping.get("preferred_text_editor", preferred_text_editor);
 
   std::optional<ReaderMapping> config_video_mapping;
@@ -313,6 +319,9 @@ Config::load()
       fullscreen_size = Size(0, 0);
     }
     config_video_mapping->get("fullscreen_refresh_rate", fullscreen_refresh_rate);
+    config_video_mapping->get("fullscreen_refresh_rate_numerator", fullscreen_refresh_rate_numerator);
+    config_video_mapping->get("fullscreen_refresh_rate_denominator", fullscreen_refresh_rate_denominator);
+    config_video_mapping->get("fullscreen_pixel_density", fullscreen_pixel_density);
 
     config_video_mapping->get("window_width",  window_size.width);
     config_video_mapping->get("window_height", window_size.height);
@@ -322,10 +331,22 @@ Config::load()
     config_video_mapping->get("aspect_width",  aspect_size.width);
     config_video_mapping->get("aspect_height", aspect_size.height);
     config_video_mapping->get("flash_intensity", flash_intensity);
+    {
+      std::string screen_shake_mode_string;
+      config_video_mapping->get("screen_shake_mode", screen_shake_mode_string, "full");
+      if (screen_shake_mode_string == "off") {
+        screen_shake_mode = ScreenShakeMode::OFF;
+      } else if (screen_shake_mode_string == "reduced") {
+        screen_shake_mode = ScreenShakeMode::REDUCED;
+      } else if (screen_shake_mode_string == "full") {
+        screen_shake_mode = ScreenShakeMode::FULL;
+      } else {
+        throw std::runtime_error("invalid screen shake mode, valid values are 'off', 'reduced', and 'full'");
+      }
+    }
 
     config_video_mapping->get("magnification", magnification);
     config_video_mapping->get("fancy_gfx", fancy_gfx);
-    config_video_mapping->get("prefer_wayland", prefer_wayland);
     config_video_mapping->get("max_viewport", max_viewport);
 
     Viewport::force_full_viewport(max_viewport, true);
@@ -368,6 +389,7 @@ Config::load()
     config_control_mapping->get("touch_haptic_feedback", touch_haptic_feedback);
     config_control_mapping->get("touch_just_directional", touch_just_directional);
     config_control_mapping->get("mobile_controls_scale", m_mobile_controls_scale, 2);
+    config_control_mapping->get("touch_controls_visible", touch_controls_visible);
     config_control_mapping->get("precise_scrolling", precise_scrolling);
     config_control_mapping->get("invert_wheel_x", invert_wheel_x);
     config_control_mapping->get("invert_wheel_y", invert_wheel_y);
@@ -457,6 +479,7 @@ Config::save()
   writer.write("multiplayer_auto_manage_players", multiplayer_auto_manage_players);
   writer.write("multiplayer_multibind", multiplayer_multibind);
   writer.write("multiplayer_buzz_controllers", multiplayer_buzz_controllers);
+  writer.write("multiplayer_no_limit", multiplayer_no_limit);
   writer.write("preferred_text_editor", preferred_text_editor);
 
   writer.start_list("interface_colors");
@@ -466,7 +489,7 @@ Config::save()
   writer.write("menuhelpfrontcolor", menuhelpfrontcolor.toVector());
   writer.write("labeltextcolor", labeltextcolor.toVector());
   writer.write("activetextcolor", activetextcolor.toVector());
-  writer.write("hlcolor", hlcolor.toVector());
+  writer.write("hlcolor2", hlcolor.toVector());
   writer.write("editorcolor", editorcolor.toVector());
   writer.write("editorhovercolor", editorhovercolor.toVector());
   writer.write("editorgrabcolor", editorgrabcolor.toVector());
@@ -486,6 +509,9 @@ Config::save()
   writer.write("fullscreen_width",  fullscreen_size.width);
   writer.write("fullscreen_height", fullscreen_size.height);
   writer.write("fullscreen_refresh_rate", fullscreen_refresh_rate);
+  writer.write("fullscreen_refresh_rate_numerator", fullscreen_refresh_rate_numerator);
+  writer.write("fullscreen_refresh_rate_denominator", fullscreen_refresh_rate_denominator);
+  writer.write("fullscreen_pixel_density", fullscreen_pixel_density);
 
   writer.write("window_width",  window_size.width);
   writer.write("window_height", window_size.height);
@@ -496,6 +522,21 @@ Config::save()
   writer.write("aspect_height", aspect_size.height);
 
   writer.write("flash_intensity", flash_intensity);
+  {
+    std::string screen_shake_mode_string;
+    switch (screen_shake_mode) {
+      case ScreenShakeMode::OFF:
+        screen_shake_mode_string = "off";
+        break;
+      case ScreenShakeMode::REDUCED:
+        screen_shake_mode_string = "reduced";
+        break;
+      case ScreenShakeMode::FULL:
+        screen_shake_mode_string = "full";
+        break;
+    }
+    writer.write("screen_shake_mode", screen_shake_mode_string);
+  }
 
 #ifdef __EMSCRIPTEN__
   // Forcibly set autofit to true
@@ -505,7 +546,6 @@ Config::save()
 
   writer.write("magnification", magnification);
   writer.write("fancy_gfx", fancy_gfx);
-  writer.write("prefer_wayland", prefer_wayland);
   writer.write("max_viewport", max_viewport);
 
   writer.end_list("video");
@@ -531,6 +571,7 @@ Config::save()
     writer.write("touch_haptic_feedback", touch_haptic_feedback);
     writer.write("touch_just_directional", touch_just_directional);
     writer.write("mobile_controls_scale", m_mobile_controls_scale);
+    writer.write("touch_controls_visible", touch_controls_visible);
     writer.write("precise_scrolling", precise_scrolling);
     writer.write("invert_wheel_x", invert_wheel_x);
     writer.write("invert_wheel_y", invert_wheel_y );

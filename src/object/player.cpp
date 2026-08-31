@@ -820,7 +820,7 @@ Player::update(float dt_sec)
     }
   }
 
-  if (m_floor_normal.y < 0.f && m_crawl)
+  if (m_floor_normal.y < 0.f && m_crawl && !m_stone)
   {
     m_crawl = false;
     m_sliding = true;
@@ -868,8 +868,8 @@ Player::update(float dt_sec)
     {
       if (!m_jumping && !m_is_slidejump_falling)
       {
-        sliding_angle = math::degrees(math::angle(m_physic.get_velocity()));
-        if (m_physic.get_velocity_x() < 0.0f)
+        sliding_angle = math::degrees(math::angle(get_movement()));
+        if (get_movement().x < 0.0f)
         {
           sliding_angle -= 180.0f;
         }
@@ -973,11 +973,14 @@ Player::slide()
   }
   m_sliding = true;
 
-  if (m_physic.get_velocity_x() > 0.f) {
-    m_dir = Direction::RIGHT;
-  }
-  else if (m_physic.get_velocity_x() < 0.f) {
-    m_dir = Direction::LEFT;
+  if (on_ground())
+  {
+    if (m_physic.get_velocity_x() > 0.f) {
+      m_dir = Direction::RIGHT;
+    }
+    else if (m_physic.get_velocity_x() < 0.f) {
+      m_dir = Direction::LEFT;
+    }
   }
 
   //pre_slide helps us detect the ground where Tux is about to slide on because sometimes on_ground() doesn't work or isn't relevant
@@ -1229,7 +1232,10 @@ Player::handle_horizontal_input()
   if (m_controller->hold(Control::DOWN) && on_ground() && m_floor_normal.y != 0)
   {
     if (get_bonus() == BONUS_EARTH)
+    {
       m_stone = true;
+      m_does_buttjump = false;
+    }
     m_sliding = true;
     // silly nonsense; tuxs "unslides" back into tall tux if he's large and his
     // action 'clips' through the ground. Don't blame me, i hate this file.
@@ -1424,7 +1430,7 @@ Player::do_backflip() {
 
 void
 Player::do_jump(float yspeed) {
-  if (!m_can_walljump && !m_in_walljump_tile && !on_ground() && !m_coyote_timer.started())
+  if (!m_can_walljump && !on_ground() && !m_coyote_timer.started())
     return;
 
   // jump only if it would make Tux go faster upwards
@@ -1451,6 +1457,15 @@ Player::do_jump(float yspeed) {
       SoundManager::current()->play("sounds/jump.wav", get_pos());
     }
   }
+}
+
+void
+Player::clear_jump_state_for_bounce()
+{
+  m_jumping = false;
+  m_is_slidejump_falling = false;
+  m_jump_early_apex = false;
+  m_physic.set_gravity_modifier(1.f);
 }
 
 void
@@ -1973,7 +1988,7 @@ Player::add_bonus(BonusType type, bool animate)
 }
 
 bool
-Player::set_bonus(BonusType type, bool animate)
+Player::set_bonus(BonusType type, bool animate, bool pocket)
 {
   if (m_dying) {
     return false;
@@ -1999,6 +2014,10 @@ Player::set_bonus(BonusType type, bool animate)
       else
         set_action("grow", m_dir , 1);
     }
+    else if (type == BONUS_GROWUP) {
+      // force-change Tux's sprite immediately when growing up
+      m_reset_action = true;
+    }
   }
 
   if (type == BONUS_NONE) {
@@ -2011,7 +2030,8 @@ Player::set_bonus(BonusType type, bool animate)
 
   if (type > BONUS_GROWUP)
   {
-    m_player_status.add_item_to_pocket(get_bonus(), this);
+    if (pocket)
+      m_player_status.add_item_to_pocket(get_bonus(), this);
 
     if (!m_second_growup_sound_timer.started() && type != get_bonus())
     {
@@ -2485,6 +2505,8 @@ Player::on_flip(float height)
   Vector pos = get_pos();
   pos.y = height - pos.y - get_bbox().get_height();
   set_pos_reset(pos);
+
+  position_grabbed_object(true);
 }
 
 void
@@ -3168,6 +3190,7 @@ Player::register_class(ssq::VM& vm)
   cls.addFunc("enable_fancy_idling", &Player::enable_fancy_idling);
   cls.addFunc("disable_fancy_idling", &Player::disable_fancy_idling);
   cls.addFunc("walk", &Player::walk);
+  cls.addFunc("on_ground", &Player::on_ground);
   cls.addFunc("set_dir", &Player::set_dir);
   cls.addFunc("set_visible", &Player::set_visible);
   cls.addFunc("get_visible", &Player::get_visible);

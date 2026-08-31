@@ -85,6 +85,7 @@ public:
 
   virtual IntegrationStatus get_status() const override;
 
+  bool has_focus() const;
   void event(const SDL_Event& ev) override;
   void on_window_resize() override;
 
@@ -248,6 +249,7 @@ public:
   bool m_shift_pressed;
   bool m_alt_pressed;
   bool m_key_zoomed;
+  bool m_pen_down;
 
   ScriptManager m_script_manager;
 
@@ -292,7 +294,7 @@ private:
 
   bool m_layers_widget_needs_refresh;
 
-  SpritePtr m_shadow;
+  SpritePtr m_test_icon;
 
 private:
   Editor(const Editor&) = delete;

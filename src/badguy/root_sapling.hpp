@@ -48,11 +48,9 @@ protected:
   virtual std::vector<Direction> get_allowed_directions() const override;
 
 private:
+  float get_tile_spawn_pos_offset(const Tile& tile);
   void summon_root();
   bool should_summon_root(const Rectf& bbox);
-
-  /** Fix raycasting down/right. More info in the implementation. */
-  CollisionSystem::RaycastResult reverse_raycast(const Vector& line_start, const Vector& line_end);
 
 private:
   Timer m_root_timer;

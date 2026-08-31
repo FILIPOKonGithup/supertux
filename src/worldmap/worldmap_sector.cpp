@@ -78,6 +78,8 @@ WorldMapSector::WorldMapSector(WorldMap& parent) :
 
 WorldMapSector::~WorldMapSector()
 {
+  m_destruction_imminent = true;
+
   m_spawnpoints.clear();
 
   clear_objects();
@@ -146,9 +148,6 @@ WorldMapSector::setup()
     // doesn't exist or erroneous; do nothing
   }
 
-  if (!m_init_script.empty())
-    m_squirrel_environment->run_script(m_init_script, "WorldMapSector::init");
-
   // Check if Tux is on an auto-playing level.
   // No need to play music in that case.
   LevelTile* level = at_object<LevelTile>();
@@ -157,6 +156,9 @@ WorldMapSector::setup()
 
   auto& music_object = get_singleton_by_type<MusicObject>();
   music_object.play_music(MusicType::LEVEL_MUSIC);
+
+  if (!m_init_script.empty())
+    m_squirrel_environment->run_script(m_init_script, "WorldMapSector::init");
 }
 
 void

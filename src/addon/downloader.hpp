@@ -18,7 +18,8 @@
 
 #pragma once
 
-#ifndef EMSCRIPTEN
+#include <config.h>
+#ifdef NETWORKING
 #include <curl/curl.h>
 #include <curl/easy.h>
 #endif
@@ -117,7 +118,7 @@ class Transfer;
 class Downloader final
 {
 private:
-#ifndef EMSCRIPTEN
+#ifdef NETWORKING
   CURLM* m_multi_handle;
 #endif
   std::map<TransferId, std::unique_ptr<Transfer> > m_transfers;
@@ -145,7 +146,7 @@ public:
   TransferStatusPtr request_string_download(const std::string& url, std::string& out_string);
   void abort(TransferId id);
 
-#ifdef EMSCRIPTEN
+#ifdef __EMSCRIPTEN__
   void onDownloadProgress(int id, int loaded, int total);
   void onDownloadFinished(int id, const char* data);
   void onDownloadError(int id);

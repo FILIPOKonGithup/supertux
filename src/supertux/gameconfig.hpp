@@ -28,6 +28,11 @@
 class Config final
 {
 public:
+  enum class ScreenShakeMode {
+    OFF, REDUCED, FULL
+  };
+
+public:
   Config();
 
   void load();
@@ -47,7 +52,15 @@ public:
   Size fullscreen_size;
 
   /** refresh rate for use in fullscreen, 0 for auto */
-  int fullscreen_refresh_rate;
+  float fullscreen_refresh_rate;
+
+  /** refresh rate numerator, because as of SDL3, it wants it like this. */
+  int fullscreen_refresh_rate_numerator;
+
+  /** refresh rate denominator, because as of SDL3, it wants it like this. */
+  int fullscreen_refresh_rate_denominator;
+
+  float fullscreen_pixel_density;
 
   /** the width/height of the window managers window */
   Size window_size;
@@ -79,13 +92,11 @@ public:
   int sound_volume;
   int music_volume;
   int flash_intensity;
+  ScreenShakeMode screen_shake_mode;
   bool precise_scrolling;
   bool invert_wheel_x;
   bool invert_wheel_y;
   bool max_viewport;
-
-  /** Prefer the wayland session. Depending on the platform, this may not be used. */
-  bool prefer_wayland;
 
   /** Toggles fancy graphical effects like displacement or blur (primarily for the GL backend) */
   bool fancy_gfx;
@@ -111,6 +122,7 @@ public:
 
   bool mobile_controls;
   float m_mobile_controls_scale;
+  bool touch_controls_visible;
 
   struct Addon
   {
@@ -179,6 +191,7 @@ public:
   bool multiplayer_auto_manage_players;
   bool multiplayer_multibind;
   bool multiplayer_buzz_controllers;
+  bool multiplayer_no_limit;
 
   std::string repository_url;
 

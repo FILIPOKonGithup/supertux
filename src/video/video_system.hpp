@@ -18,7 +18,7 @@
 
 #include <string>
 #include <vector>
-#include <SDL.h>
+#include <SDL3/SDL.h>
 
 #include "math/size.hpp"
 #include "util/currenton.hpp"
@@ -74,6 +74,7 @@ public:
   virtual void apply_config() = 0;
   virtual void flip() = 0;
   virtual void on_resize(int w, int h) = 0;
+  virtual SDL_Window* get_window() const = 0;
   virtual Size get_window_size() const = 0;
 
   virtual void set_vsync(int mode) = 0;

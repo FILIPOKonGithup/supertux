@@ -193,7 +193,14 @@ ScreenManager::quit(std::unique_ptr<ScreenFade> screen_fade)
 {
   Integration::close_all();
 
-  GameManager::current()->save();
+  // XXX: This was an old thing to attempt to 'save' the game on exit, but
+  // because this game is very weird it will save the worldmap when you exit
+  // even when you're on the titlescreen, but this can now break your save
+  // because of the save-version check. A proper solution could be employed, but
+  // 0.7 releases today so I'm just gonna turn it off. It's rather harmless,
+  // anyway.
+
+  //  GameManager::current()->save();
 
 #ifdef __EMSCRIPTEN__
   g_config->save();
@@ -345,7 +352,7 @@ ScreenManager::process_events()
 
     switch (event.type)
     {
-      case SDL_FINGERDOWN:
+      case SDL_EVENT_FINGER_DOWN:
       {
         SDL_Event old_event = event;
 
@@ -354,27 +361,27 @@ ScreenManager::process_events()
         if (m_mobile_controller.process_finger_down_event(event.tfinger))
           break; // Event was processed by touch controls, do not generate mouse event
 
-        event2.type = SDL_MOUSEBUTTONDOWN;
+        event2.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
         event2.button.button = SDL_BUTTON_LEFT;
         event2.button.x = Sint32(old_event.tfinger.x * window_width);
         event2.button.y = Sint32(old_event.tfinger.y * window_height);
         SDL_PushEvent(&event2);
 
-        event.type = SDL_MOUSEMOTION;
+        event.type = SDL_EVENT_MOUSE_MOTION;
         event.motion.x = event2.button.x;
         event.motion.y = event2.button.y;
         MouseCursor::current()->set_pos(event.button.x, event.button.y);
         break;
       }
 
-      case SDL_FINGERUP:
+      case SDL_EVENT_FINGER_UP:
       {
         SDL_Event old_event = event;
 
         // Always generate mouse up event, because the finger can generate mouse click
         // and then move to the screen button, and the mouse button will stay pressed
         SDL_Event event2;
-        event2.type = SDL_MOUSEBUTTONUP;
+        event2.type = SDL_EVENT_MOUSE_BUTTON_UP;
         event2.button.button = SDL_BUTTON_LEFT;
         event2.button.x = Sint32(old_event.tfinger.x * window_width);
         event2.button.y = Sint32(old_event.tfinger.y * window_height);
@@ -383,20 +390,20 @@ ScreenManager::process_events()
         if (m_mobile_controller.process_finger_up_event(event.tfinger))
           break; // Event was processed by touch controls, do not generate mouse event
 
-        event.type = SDL_MOUSEMOTION;
+        event.type = SDL_EVENT_MOUSE_MOTION;
         event.motion.x = event2.button.x;
         event.motion.y = event2.button.y;
         MouseCursor::current()->set_pos(event.button.x, event.button.y);
         break;
       }
 
-      case SDL_FINGERMOTION:
+      case SDL_EVENT_FINGER_MOTION:
         SDL_Event old_event = event;
 
         if (m_mobile_controller.process_finger_motion_event(event.tfinger))
           break; // Event was processed by touch controls, do not generate mouse event
 
-        event.type = SDL_MOUSEMOTION;
+        event.type = SDL_EVENT_MOUSE_MOTION;
         event.motion.x = Sint32(old_event.tfinger.x * window_width);
         event.motion.y = Sint32(old_event.tfinger.y * window_height);
         event.motion.xrel = Sint32(old_event.tfinger.dx * window_width);
@@ -406,61 +413,74 @@ ScreenManager::process_events()
     }
     m_input_manager.process_event(event);
 
-    m_menu_manager->event(event);
-
 #define LOGMOUSEY(var) VideoSystem::current()->get_viewport().to_logical(0, var).y
     // If the console is focused, try to funnel mouse events into that. Lisp
     // programmers would be proud!
     // TODO: Dragging-like logic is a little funky, but it's not a big deal
     if (Console::current()->hasFocus() &&
-        ((event.type == SDL_MOUSEWHEEL && LOGMOUSEY(event.wheel.mouseY) < Console::HEIGHT) ||
-         ((event.type == SDL_MOUSEBUTTONDOWN ||
-           event.type == SDL_MOUSEBUTTONUP) && LOGMOUSEY(event.button.y) < Console::HEIGHT) ||
-         (event.type == SDL_MOUSEMOTION && LOGMOUSEY(event.motion.y) < Console::HEIGHT)))
+        ((event.type == SDL_EVENT_MOUSE_WHEEL && LOGMOUSEY(event.wheel.mouse_y) < Console::HEIGHT) ||
+         ((event.type == SDL_EVENT_MOUSE_BUTTON_DOWN ||
+           event.type == SDL_EVENT_MOUSE_BUTTON_UP) && LOGMOUSEY(event.button.y) < Console::HEIGHT) ||
+         (event.type == SDL_EVENT_MOUSE_MOTION && LOGMOUSEY(event.motion.y) < Console::HEIGHT)))
     {
-      if (event.type == SDL_MOUSEWHEEL)
+      if (event.type == SDL_EVENT_MOUSE_WHEEL)
         Console::current()->scroll(-event.wheel.y * 2);
     }
     else
+    {
+      m_menu_manager->event(event);
       m_screen_stack.back()->event(event);
+    }
 #undef LOGMOUSEY
 
     switch (event.type)
     {
-      case SDL_QUIT:
+      case SDL_EVENT_QUIT:
         quit();
         break;
 
-      case SDL_WINDOWEVENT:
-        switch (event.window.event)
-        {
-          case SDL_WINDOWEVENT_RESIZED:
-            m_video_system.on_resize(event.window.data1, event.window.data2);
-            on_window_resize();
-            break;
+      case SDL_EVENT_WINDOW_RESIZED:
+        m_video_system.on_resize(event.window.data1, event.window.data2);
+        on_window_resize();
+        break;
 
-          case SDL_WINDOWEVENT_HIDDEN:
-          case SDL_WINDOWEVENT_FOCUS_LOST:
-            if (g_config->pause_on_focusloss)
-            {
-              if (session != nullptr && session->is_active() && !Level::current()->m_suppress_pause_menu)
-              {
-                session->toggle_pause();
-              }
-            }
-            break;
+      case SDL_EVENT_WINDOW_HIDDEN:
+      case SDL_EVENT_WINDOW_FOCUS_LOST:
+        if (g_config->pause_on_focusloss)
+        {
+          if (session != nullptr && session->is_active() && !Level::current()->m_suppress_pause_menu)
+          {
+            session->toggle_pause();
+          }
+        }
+        break;
+      case SDL_EVENT_WINDOW_ENTER_FULLSCREEN:
+        if (!g_config->use_fullscreen)
+        {
+          g_config->use_fullscreen = true;
+          m_video_system.apply_config();
+          m_menu_manager->on_window_resize();
+        }
+        break;
+      
+      case SDL_EVENT_WINDOW_LEAVE_FULLSCREEN:
+        if (g_config->use_fullscreen)
+        {
+          g_config->use_fullscreen = false;
+          m_video_system.apply_config();
+          m_menu_manager->on_window_resize();
         }
         break;
 
-      case SDL_KEYDOWN:
-        if (event.key.keysym.sym == SDLK_F10)
+      case SDL_EVENT_KEY_DOWN:
+        if (event.key.key == SDLK_F10)
         {
           g_config->show_fps = !g_config->show_fps;
         }
-#ifndef EMSCRIPTEN // Emscripten builds manage this through JS code
-        else if (event.key.keysym.sym == SDLK_F11 ||
-                 ((event.key.keysym.mod & KMOD_LALT || event.key.keysym.mod & KMOD_RALT) &&
-                 (event.key.keysym.sym == SDLK_KP_ENTER || event.key.keysym.sym == SDLK_RETURN)))
+#ifndef __EMSCRIPTEN__ // Emscripten builds manage this through JS code
+        else if (event.key.key == SDLK_F11 ||
+                 ((event.key.mod & SDL_KMOD_LALT || event.key.mod & SDL_KMOD_RALT) &&
+                 (event.key.key == SDLK_KP_ENTER || event.key.key == SDLK_RETURN)))
         {
           g_config->use_fullscreen = !g_config->use_fullscreen;
           m_video_system.apply_config();
@@ -469,8 +489,8 @@ ScreenManager::process_events()
 #endif
 #ifdef STEAM_BUILD
         // Shift+Tab opens the overlay; pause the game
-        else if (event.key.keysym.sym == SDLK_TAB &&
-                 (event.key.keysym.mod & KMOD_LSHIFT || event.key.keysym.mod & KMOD_RSHIFT))
+        else if (event.key.key == SDLK_TAB &&
+                 (event.key.mod & SDL_KMOD_LSHIFT || event.key.mod & SDL_KMOD_RSHIFT))
         {
           if (session != nullptr && session->is_active() && !Level::current()->m_suppress_pause_menu)
           {
@@ -478,13 +498,13 @@ ScreenManager::process_events()
           }
         }
 #endif
-        else if (event.key.keysym.sym == SDLK_PRINTSCREEN ||
-                 event.key.keysym.sym == SDLK_F12)
+        else if (event.key.key == SDLK_PRINTSCREEN ||
+                 event.key.key == SDLK_F12)
         {
           m_video_system.do_take_screenshot();
         }
-        else if (event.key.keysym.sym == SDLK_F2 &&
-                 event.key.keysym.mod & KMOD_CTRL)
+        else if (event.key.key == SDLK_F2 &&
+                 event.key.mod & SDL_KMOD_CTRL)
         {
           if ((g_config->developer_mode = !g_config->developer_mode) == true)
           {
@@ -496,8 +516,8 @@ ScreenManager::process_events()
 
       // NOTE: Steam recommends leaving this behavior in. If it turns out to be
       // impractical for users, please add `#ifdef STEAM_BUILD` code around it.
-      case SDL_JOYDEVICEREMOVED:
-      case SDL_CONTROLLERDEVICEREMOVED:
+      case SDL_EVENT_JOYSTICK_REMOVED:
+      case SDL_EVENT_GAMEPAD_REMOVED:
         if (session != nullptr && session->is_active() && !Level::current()->m_suppress_pause_menu)
         {
           session->toggle_pause();
@@ -569,6 +589,12 @@ ScreenManager::handle_screen_switch()
 
       if (!quit_action_triggered)
       {
+        if (m_screen_stack.empty())
+        {
+          log_debug << "ScreenManager::handle_screen_switch(): screen stack is empty, quitting." << std::endl;
+          break;
+        }
+
         if (current_screen != m_screen_stack.back().get())
         {
           g_debug.set_game_speed_multiplier(1.f);
@@ -674,7 +700,7 @@ void ScreenManager::loop_iter()
 
   handle_screen_switch();
 
-#ifdef EMSCRIPTEN
+#ifdef __EMSCRIPTEN__
   EM_ASM({
     supertux2_syncfs();
   }, 0); // EM_ASM is a variadic macro and Clang requires at least 1 value for the variadic argument

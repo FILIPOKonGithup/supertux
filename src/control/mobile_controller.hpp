@@ -16,7 +16,7 @@
 
 #pragma once
 
-#include <SDL.h>
+#include <SDL3/SDL.h>
 #include <map>
 #include <bitset>
 
@@ -48,6 +48,7 @@ public:
   void buzz();
 
 private:
+  bool pos_inside_widget(const Vector& pos) const;
   void activate_widget_at_pos(float x, float y);
 
 private:
@@ -68,7 +69,8 @@ private:
 
   // We need the timer to be away from the game loop to stop vibration
   SDL_TimerID m_haptic_timer;
-  std::unique_ptr<SDL_Haptic, decltype(&SDL_HapticClose)> m_haptic;
+  //std::unique_ptr<SDL_Haptic, decltype(&SDL_HapticClose)> m_haptic;
+  void* m_haptic;
 
 private:
   MobileController(const MobileController&) = delete;

@@ -51,6 +51,7 @@ private:
   void add_window_resolutions();
   void add_resolutions();
   void add_vsync();
+  void add_screen_shake_mode();
   void add_sound_volume();
   void add_music_volume();
   void add_flash_intensity();
@@ -73,6 +74,7 @@ private:
     MNID_SOUND_VOLUME,
     MNID_MUSIC_VOLUME,
     MNID_FLASH_INTENSITY,
+    MNID_SCREEN_SHAKE_MODE,
     MNID_RUMBLING,
     MNID_DEVELOPER_MODE,
     MNID_CHRISTMAS_MODE,
@@ -81,7 +83,6 @@ private:
     MNID_CUSTOM_TITLE_LEVELS,
     MNID_CONFIRMATION_DIALOG,
     MNID_PAUSE_ON_FOCUSLOSS,
-    MNID_PREFER_WAYLAND,
     MNID_CUSTOM_CURSOR,
     MNID_MAX_VIEWPORT,
     MNID_RELEASE_CHECK,
@@ -95,7 +96,13 @@ private:
 
 private:
   struct StringOption {
+    // Lousy hack: my excuse is that this code is terrible anyway
+    struct StringOptionData {
+      std::optional<SDL_DisplayMode> mode;
+    };
     std::vector<std::string> list = {};
+    // ughs
+    std::vector<StringOptionData> data = {};
     int next = 0;
   };
 
@@ -108,6 +115,7 @@ private:
   StringOption m_window_resolutions;
   StringOption m_resolutions;
   StringOption m_vsyncs;
+  StringOption m_screen_shake_modes;
   StringOption m_sound_volumes;
   StringOption m_music_volumes;
   StringOption m_flash_intensity_values;

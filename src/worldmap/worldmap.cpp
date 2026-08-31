@@ -27,7 +27,6 @@
 #include "supertux/gameconfig.hpp"
 #include "editor/editor.hpp"
 #include "supertux/level.hpp"
-#include "supertux/menu/menu_storage.hpp"
 #include "supertux/player_status.hpp"
 #include "supertux/screen_manager.hpp"
 #include "supertux/tile_manager.hpp"
@@ -56,6 +55,7 @@ WorldMap::WorldMap(const std::string& filename, Savegame& savegame,
   m_savegame(nullptr),
   m_tileset(nullptr),
   m_name(),
+  m_save_version(1),
   m_map_filename(),
   m_levels_path(),
   m_has_next_worldmap(false),
@@ -98,6 +98,7 @@ WorldMap::load(const std::string& filename, Savegame& savegame,
     throw std::runtime_error("file isn't a supertux-level file.");
 
   auto mapping = root.get_mapping();
+  mapping.get("save-version", m_save_version);
 
   mapping.get("name", m_name);
 
@@ -217,21 +218,22 @@ WorldMap::process_input(const Controller& controller)
     }
   }
 
-  if (controller.pressed_any(Control::START, Control::ESCAPE))
+  if (controller.pressed_any(Control::START, Control::ESCAPE) &&
+      !(m_in_world_select || m_in_level))
   {
-    on_escape_press();
+    on_menu_button_press(MenuStorage::WORLDMAP_MENU);
   }
 
   if (controller.pressed(Control::CHEAT_MENU) &&
       g_config->developer_mode)
   {
-    MenuManager::instance().set_menu(MenuStorage::WORLDMAP_CHEAT_MENU);
+    on_menu_button_press(MenuStorage::WORLDMAP_CHEAT_MENU);
   }
 
   if (controller.pressed(Control::DEBUG_MENU) &&
       g_config->developer_mode)
   {
-    MenuManager::instance().set_menu(MenuStorage::DEBUG_MENU);
+    on_menu_button_press(MenuStorage::DEBUG_MENU);
   }
 }
 
@@ -246,12 +248,12 @@ WorldMap::get_status() const
 
 
 void
-WorldMap::on_escape_press()
+WorldMap::on_menu_button_press(MenuStorage::MenuId menu_type)
 {
   // Show or hide the menu
   if (!MenuManager::instance().is_active())
   {
-    MenuManager::instance().set_menu(MenuStorage::WORLDMAP_MENU);
+    MenuManager::instance().set_menu(menu_type);
     MouseCursor::current()->set_visible(true);
     m_sector->get_tux().set_direction(Direction::NONE); // stop tux movement when menu is called
   }
